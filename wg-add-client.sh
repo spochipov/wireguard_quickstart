@@ -128,7 +128,7 @@ MTU = 1420
 
 [Peer]
 PublicKey = $SERVER_PUBLIC_KEY
-Endpoint = $SERVER_ENDPOINT:$SERVER_PORT
+Endpoint = [$SERVER_ENDPOINT]:$SERVER_PORT
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
 EOF
@@ -153,7 +153,7 @@ MTU = 1420
 
 [Peer]
 PublicKey = $SERVER_PUBLIC_KEY
-Endpoint = [$SERVER_ENDPOINT]:$SERVER_PORT
+Endpoint = $SERVER_ENDPOINT:$SERVER_PORT
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 EOF
