@@ -13,6 +13,10 @@ wg*.conf
 clients/
 /clients/
 
+# Docker data directory
+docker-data/
+/docker-data/
+
 # Backup files
 *.backup
 *.backup.*

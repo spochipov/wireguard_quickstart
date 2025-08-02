@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  wireguard-server:
+    image: debian:12
+    container_name: wireguard-test-server
+    hostname: wireguard-server
+    privileged: true
+    ports:
+      - "5182:51820/udp"
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    volumes:
+      # Mount setup script to home directory
+      - ./wg-server-setup.sh:/root/wg-server-setup.sh
+      # Mount wireguard config directory (will be created)
+      - ./docker-data/wireguard:/etc/wireguard
+      # Mount system directories for persistence
+      - ./docker-data/sysctl:/etc/sysctl.d
+      - ./docker-data/ufw:/etc/ufw
+      - ./docker-data/scripts:/usr/local/bin
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+      - TZ=UTC
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    command: >
+      bash -c "
+        echo 'WireGuard Test Server Started';
+        echo 'Setup script available at: /root/wg-server-setup.sh';
+        echo 'Run: chmod +x /root/wg-server-setup.sh && /root/wg-server-setup.sh';
+        echo 'Container ready for WireGuard installation...';
+        tail -f /dev/null
+      "
+
+  # Optional: Debian client for testing
+  wireguard-client:
+    image: debian:12
+    container_name: wireguard-test-client
+    hostname: wireguard-client
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./docker-data/client-configs:/etc/wireguard
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+      - TZ=UTC
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    profiles:
+      - testing
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y wireguard-tools iproute2 iputils-ping curl;
+        echo 'WireGuard Test Client Ready';
+        echo 'Copy client config to /etc/wireguard/ and run: wg-quick up <config>';
+        tail -f /dev/null
+      "

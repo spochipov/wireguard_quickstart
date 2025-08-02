@@ -279,6 +279,24 @@ apt update && apt upgrade wireguard wireguard-tools
 systemctl restart wg-quick@wg0
 ```
 
+## 🐳 Docker Testing Environment
+
+Для тестирования и разработки доступна Docker среда:
+
+```bash
+# Запустить тестовый сервер
+docker-compose up -d wireguard-server
+
+# Подключиться к контейнеру
+docker exec -it wireguard-test-server bash
+
+# Установить WireGuard
+chmod +x /root/wg-server-setup.sh
+/root/wg-server-setup.sh
+```
+
+Подробнее: [DOCKER_TESTING.md](DOCKER_TESTING.md)
+
 ## 📞 Поддержка
 
 При возникновении проблем:
