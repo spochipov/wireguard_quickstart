@@ -14,7 +14,7 @@ ssh root@your-server-ip
 
 2. **Скачайте и запустите скрипт установки:**
 ```bash
-wget https://raw.githubusercontent.com/your-repo/wireguard/main/wg-server-setup.sh
+wget https://raw.githubusercontent.com/spochipov/wireguard_quickstart/main/wg-server-setup.sh
 chmod +x wg-server-setup.sh
 ./wg-server-setup.sh
 ```
@@ -268,7 +268,7 @@ wg show wg0 peers
 
 ```bash
 # Скачайте новые версии скриптов
-wget -O /usr/local/bin/wg-add-client https://raw.githubusercontent.com/your-repo/wireguard/main/wg-add-client.sh
+wget -O /usr/local/bin/wg-add-client https://raw.githubusercontent.com/spochipov/wireguard_quickstart/main/wg-add-client.sh
 chmod +x /usr/local/bin/wg-add-client
 ```
 

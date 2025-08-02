@@ -13,7 +13,7 @@
 ssh root@your-server-ip
 
 # Скачайте скрипт
-wget https://raw.githubusercontent.com/your-repo/wireguard/main/wg-server-setup.sh
+wget https://raw.githubusercontent.com/spochipov/wireguard_quickstart/main/wg-server-setup.sh
 
 # Запустите установку
 chmod +x wg-server-setup.sh
