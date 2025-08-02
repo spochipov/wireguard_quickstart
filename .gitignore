@@ -1,0 +1,87 @@
+# WireGuard private keys and configurations
+privatekey
+publickey
+*.key
+*.psk
+
+# WireGuard configuration files
+wg0.conf
+wg1.conf
+wg*.conf
+
+# Client configurations directory
+clients/
+/clients/
+
+# Backup files
+*.backup
+*.backup.*
+wireguard-backups/
+/root/wireguard-backups/
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+
+# Log files
+*.log
+/var/log/wireguard*
+
+# System files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Generated files
+qr-codes/
+*.png
+*.jpg
+*.jpeg
+
+# Archive files
+*.tar.gz
+*.zip
+*.rar
+
+# Runtime files
+*.pid
+*.sock
+
+# Certificate files (if any)
+*.crt
+*.pem
+*.p12
+*.pfx
+
+# Database files (if any)
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache directories
+cache/
+.cache/
+
+# Node modules (if any web interface added)
+node_modules/
+
+# Python cache (if any Python scripts added)
+__pycache__/
+*.pyc
+*.pyo
+
+# Sensitive configuration files
+config.local.*
+secrets.*
