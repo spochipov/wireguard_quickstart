@@ -57,6 +57,21 @@ generate_unique_networks() {
     IPV6_SERVER="${IPV6_NETWORK}::1"
 }
 
+# Update system and install basic packages first
+install_basic_packages() {
+    log "Updating system packages..."
+    apt update
+    
+    log "Installing basic network tools..."
+    apt install -y \
+        iproute2 \
+        curl \
+        wget \
+        net-tools \
+        procps \
+        systemd
+}
+
 # Detect network interface
 detect_interface() {
     INTERFACE=$(ip route | grep default | head -1 | awk '{print $5}')
@@ -66,25 +81,16 @@ detect_interface() {
     log "Detected network interface: $INTERFACE"
 }
 
-# Update system and install packages
+# Install remaining packages
 install_packages() {
-    log "Updating system packages..."
-    apt update
-    
-    log "Installing required packages..."
+    log "Installing WireGuard and additional packages..."
     apt install -y \
         wireguard \
         wireguard-tools \
         qrencode \
         iptables \
-        iptables-persistent \
-        netfilter-persistent \
-        ufw \
-        curl \
-        wget \
         htop \
         iftop \
-        net-tools \
         dnsutils
 }
 
@@ -93,22 +99,13 @@ optimize_kernel() {
     log "Optimizing kernel parameters for maximum throughput..."
     
     cat > /etc/sysctl.d/99-wireguard-performance.conf << 'EOF'
-# IPv4 and IPv6 forwarding
+# IPv4 and IPv6 forwarding (essential for VPN)
 net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
 
-# Network performance optimizations
-net.core.rmem_default = 262144
-net.core.rmem_max = 16777216
-net.core.wmem_default = 262144
-net.core.wmem_max = 16777216
-net.core.netdev_max_backlog = 5000
-net.core.netdev_budget = 600
-
-# TCP optimizations
+# TCP optimizations (available in most environments)
 net.ipv4.tcp_rmem = 4096 65536 16777216
 net.ipv4.tcp_wmem = 4096 65536 16777216
-net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_mtu_probing = 1
 
@@ -116,8 +113,7 @@ net.ipv4.tcp_mtu_probing = 1
 net.ipv4.udp_rmem_min = 8192
 net.ipv4.udp_wmem_min = 8192
 
-# Connection tracking optimizations
-net.netfilter.nf_conntrack_max = 1048576
+# Connection tracking optimizations (if available)
 net.netfilter.nf_conntrack_tcp_timeout_established = 7200
 net.netfilter.nf_conntrack_udp_timeout = 60
 net.netfilter.nf_conntrack_udp_timeout_stream = 120
@@ -129,8 +125,16 @@ net.ipv6.conf.all.autoconf = 0
 net.ipv6.conf.default.autoconf = 0
 EOF
 
-    sysctl -p /etc/sysctl.d/99-wireguard-performance.conf
-    log "Kernel parameters optimized"
+    # Apply settings with error handling
+    log "Applying kernel parameters..."
+    sysctl -p /etc/sysctl.d/99-wireguard-performance.conf 2>/dev/null || {
+        warn "Some kernel parameters could not be applied (normal in containers)"
+        # Apply only essential parameters
+        sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
+        sysctl -w net.ipv6.conf.all.forwarding=1 2>/dev/null || true
+    }
+    
+    log "Kernel parameters optimized (container-compatible)"
 }
 
 # Generate WireGuard keys
@@ -149,31 +153,33 @@ generate_keys() {
     log "Server keys generated successfully"
 }
 
-# Configure firewall
+# Configure basic firewall rules
 configure_firewall() {
-    log "Configuring firewall..."
-    
-    # Reset UFW to defaults
-    ufw --force reset
-    
-    # Set default policies
-    ufw default deny incoming
-    ufw default allow outgoing
+    log "Configuring basic firewall rules..."
     
     # Allow SSH (important!)
-    ufw allow 22/tcp comment 'SSH'
+    iptables -A INPUT -p tcp --dport 22 -j ACCEPT
     
     # Allow WireGuard
-    ufw allow 51820/udp comment 'WireGuard'
+    iptables -A INPUT -p udp --dport 51820 -j ACCEPT
+    
+    # Allow established and related connections
+    iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    
+    # Allow loopback
+    iptables -A INPUT -i lo -j ACCEPT
     
     # Allow traffic from WireGuard clients
-    ufw allow from ${IPV4_NETWORK}.0/24 comment 'WireGuard IPv4 clients'
-    ufw allow from ${IPV6_NETWORK}::/64 comment 'WireGuard IPv6 clients'
+    iptables -A INPUT -s ${IPV4_NETWORK}.0/24 -j ACCEPT
     
-    # Enable UFW
-    ufw --force enable
+    # IPv6 rules
+    ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
+    ip6tables -A INPUT -p udp --dport 51820 -j ACCEPT
+    ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    ip6tables -A INPUT -i lo -j ACCEPT
+    ip6tables -A INPUT -s ${IPV6_NETWORK}::/64 -j ACCEPT
     
-    log "Firewall configured successfully"
+    log "Basic firewall rules configured"
 }
 
 # Configure iptables rules for NAT and forwarding
@@ -190,10 +196,7 @@ configure_iptables() {
     ip6tables -A FORWARD -i wg0 -j ACCEPT
     ip6tables -A FORWARD -o wg0 -j ACCEPT
     
-    # Save rules
-    netfilter-persistent save
-    
-    log "iptables rules configured and saved"
+    log "iptables rules configured (will be managed by WireGuard PostUp/PostDown)"
 }
 
 # Create WireGuard configuration
@@ -307,14 +310,30 @@ EOF
 start_wireguard() {
     log "Starting WireGuard service..."
     
-    systemctl enable wg-quick@wg0
-    systemctl start wg-quick@wg0
-    
-    # Verify service is running
-    if systemctl is-active --quiet wg-quick@wg0; then
-        log "WireGuard service started successfully"
+    # Try to use systemctl, fallback to manual start if in container
+    if command -v systemctl >/dev/null 2>&1 && systemctl --version >/dev/null 2>&1; then
+        systemctl enable wg-quick@wg0 2>/dev/null || warn "Could not enable WireGuard service (normal in containers)"
+        systemctl start wg-quick@wg0 2>/dev/null || {
+            warn "systemctl failed, trying manual start..."
+            wg-quick up wg0
+        }
+        
+        # Verify service is running
+        if systemctl is-active --quiet wg-quick@wg0 2>/dev/null || wg show wg0 >/dev/null 2>&1; then
+            log "WireGuard service started successfully"
+        else
+            error "Failed to start WireGuard service"
+        fi
     else
-        error "Failed to start WireGuard service"
+        warn "systemctl not available, starting WireGuard manually..."
+        wg-quick up wg0
+        
+        # Verify interface is up
+        if wg show wg0 >/dev/null 2>&1; then
+            log "WireGuard interface started successfully"
+        else
+            error "Failed to start WireGuard interface"
+        fi
     fi
 }
 
@@ -354,6 +373,7 @@ main() {
     log "=== WireGuard Server Setup Started ==="
     
     generate_unique_networks
+    install_basic_packages
     detect_interface
     install_packages
     optimize_kernel
