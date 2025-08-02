@@ -259,7 +259,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-CLIENT_NAME="$1"
+CLIENT_NAME="${1:-}"
 if [ -z "$CLIENT_NAME" ]; then
     echo "Usage: $0 <client_name>"
     echo "Example: $0 laptop-john"
