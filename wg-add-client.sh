@@ -1,110 +1,122 @@
 #!/bin/bash
 
 # WireGuard Client Management Script with IPv6 support
-# Usage: wg-add-client <client_name>
-# Version: 2.0 - Updated for IPv4/IPv6 dual-stack support
+# Version: 2.4 - Fixed unmatched brace error and used heredoc for client config block
 
 set -euo pipefail
 
-# Colors for output
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Check if running as root
+# Must run as root
 if [ "$(id -u)" -ne 0 ]; then
-    echo -e "${RED}Error: This script must be run as root${NC}" >&2
+    echo -e "${RED}Error: Must be run as root${NC}" >&2
+    exit 1
+fi
+
+# Check arguments
+if [ $# -lt 1 ]; then
+    echo -e "${RED}Error: Missing client name argument.${NC}" >&2
+    echo "Usage: $0 <client_name>"
     exit 1
 fi
 
 CLIENT_NAME="$1"
-if [ -z "$CLIENT_NAME" ]; then
-    echo "Usage: $0 <client_name>"
-    echo "Example: $0 laptop-john"
-    exit 1
-fi
-
 WG_CONF="/etc/wireguard/wg0.conf"
 CLIENT_DIR="/etc/wireguard/clients"
 CLIENT_CONF="$CLIENT_DIR/$CLIENT_NAME.conf"
 
-# Check if WireGuard config exists
+# Ensure base configs exist
 if [ ! -f "$WG_CONF" ]; then
-    echo -e "${RED}Error: WireGuard configuration not found at $WG_CONF${NC}" >&2
-    echo "Please run the server setup script first."
+    echo -e "${RED}Error: Configuration $WG_CONF not found.${NC}" >&2
     exit 1
 fi
 
-# Create clients directory
 mkdir -p "$CLIENT_DIR"
 
-# Check if client already exists
+# Check duplicate
 if [ -f "$CLIENT_CONF" ]; then
     echo -e "${YELLOW}Warning: Client '$CLIENT_NAME' already exists!${NC}"
-    echo "Configuration file: $CLIENT_CONF"
+    echo "File: $CLIENT_CONF"
     exit 1
 fi
 
-echo -e "${GREEN}Adding new WireGuard client: $CLIENT_NAME${NC}"
+echo -e "${GREEN}+ Adding new WireGuard client: $CLIENT_NAME${NC}"
 
-# Read server configuration
+# Read server config
 SERVER_PRIVATE_KEY=$(grep '^PrivateKey' "$WG_CONF" | cut -d' ' -f3)
 SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
 SERVER_PORT=$(grep '^ListenPort' "$WG_CONF" | cut -d' ' -f3)
 
-# Get server endpoint (external IP)
-SERVER_ENDPOINT=$(curl -s ifconfig.me 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || echo "YOUR_SERVER_IP")
-if [ "$SERVER_ENDPOINT" = "YOUR_SERVER_IP" ]; then
-    echo -e "${YELLOW}Warning: Could not detect server IP automatically.${NC}"
-    echo "Please manually replace 'YOUR_SERVER_IP' in the client config with your server's public IP."
+# Detect public IPv6 or IPv4 for Endpoint
+echo -e "${GREEN}+ Detecting public IP...${NC}"
+
+SERVER_IPV6=$(curl -6 -s https://ifconfig.co 2>/dev/null || echo "")
+SERVER_IPV4=$(curl -4 -s https://ifconfig.co 2>/dev/null || echo "")
+
+if [[ "$SERVER_IPV6" =~ ^([0-9a-fA-F:]+)$ ]]; then
+    SERVER_ENDPOINT_IP="$SERVER_IPV6"
+elif [[ "$SERVER_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    SERVER_ENDPOINT_IP="$SERVER_IPV4"
+else
+    SERVER_ENDPOINT_IP="YOUR_SERVER_IP"
+    echo -e "${YELLOW}Warning: Could not auto-detect external IP address. Please set manually.${NC}"
 fi
 
-# Extract network information from server config
-# Handle both single and dual-stack configurations
-ADDRESS_LINE=$(grep '^Address' "$WG_CONF" | cut -d'=' -f2 | tr -d ' ')
+# Format Endpoint field (IPv6 in [brackets])
+if [[ "$SERVER_ENDPOINT_IP" == *:* ]]; then
+    FORMATTED_ENDPOINT="[$SERVER_ENDPOINT_IP]"
+else
+    FORMATTED_ENDPOINT="$SERVER_ENDPOINT_IP"
+fi
 
+echo -e "${GREEN}✓ Using Endpoint: $FORMATTED_ENDPOINT:$SERVER_PORT${NC}"
+
+# Get server address block
+ADDRESS_LINE=$(grep '^Address' "$WG_CONF" | cut -d'=' -f2 | tr -d ' ')
 if [[ "$ADDRESS_LINE" == *","* ]]; then
-    # Dual-stack configuration (IPv4, IPv6)
     IPV4_SERVER=$(echo "$ADDRESS_LINE" | cut -d',' -f1)
     IPV6_SERVER=$(echo "$ADDRESS_LINE" | cut -d',' -f2)
     IPV4_NETWORK=$(echo "$IPV4_SERVER" | cut -d'.' -f1-3)
     IPV6_NETWORK=$(echo "$IPV6_SERVER" | cut -d':' -f1-4)
     DUAL_STACK=true
 else
-    # IPv4 only configuration
     IPV4_SERVER="$ADDRESS_LINE"
     IPV4_NETWORK=$(echo "$IPV4_SERVER" | cut -d'.' -f1-3)
     DUAL_STACK=false
 fi
 
-# Find next available IPv4 address
+# Find next available IPs
 CLIENT_IPV4=""
 for i in {2..254}; do
-    if ! grep -q "${IPV4_NETWORK}.$i/32" "$WG_CONF"; then
+    candidate="${IPV4_NETWORK}.$i/32"
+    if ! grep -q "$candidate" "$WG_CONF"; then
         CLIENT_IPV4="${IPV4_NETWORK}.$i"
         break
     fi
 done
 
 if [ -z "$CLIENT_IPV4" ]; then
-    echo -e "${RED}Error: No available IPv4 addresses in range ${IPV4_NETWORK}.0/24!${NC}" >&2
+    echo -e "${RED}No available IPv4s in $IPV4_NETWORK.0/24${NC}"
     exit 1
 fi
 
-# Find next available IPv6 address (if dual-stack)
 CLIENT_IPV6=""
 if [ "$DUAL_STACK" = true ]; then
     for i in {2..65534}; do
-        CLIENT_IPV6_HEX=$(printf "%x" $i)
-        if ! grep -q "${IPV6_NETWORK}::${CLIENT_IPV6_HEX}/128" "$WG_CONF"; then
-            CLIENT_IPV6="${IPV6_NETWORK}::${CLIENT_IPV6_HEX}"
+        hex=$(printf "%x" "$i")
+        candidate="${IPV6_NETWORK}::${hex}/128"
+        if ! grep -q "$candidate" "$WG_CONF"; then
+            CLIENT_IPV6="${IPV6_NETWORK}::${hex}"
             break
         fi
     done
-    
+
     if [ -z "$CLIENT_IPV6" ]; then
-        echo -e "${RED}Error: No available IPv6 addresses in range ${IPV6_NETWORK}::/64!${NC}" >&2
+        echo -e "${RED}No available IPv6s in $IPV6_NETWORK::/64${NC}"
         exit 1
     fi
 fi
@@ -114,83 +126,60 @@ umask 077
 CLIENT_PRIVATE_KEY=$(wg genkey)
 CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
 
-# Create client configuration
 echo "Generating client configuration..."
 
-if [ "$DUAL_STACK" = true ]; then
-    # Dual-stack client configuration
-    cat > "$CLIENT_CONF" << EOF
+# Write client config using heredoc
+cat > "$CLIENT_CONF" <<EOF
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
-Address = $CLIENT_IPV4/24, $CLIENT_IPV6/64
-DNS = 8.8.8.8, 2001:4860:4860::8888, 1.1.1.1, 2606:4700:4700::1111
+Address = $CLIENT_IPV4/24$( [ "$DUAL_STACK" = true ] && echo ", $CLIENT_IPV6/64" )
+DNS = 8.8.8.8, 1.1.1.1$( [ "$DUAL_STACK" = true ] && echo ", 2001:4860:4860::8888, 2606:4700:4700::1111" )
 MTU = 1420
 
 [Peer]
 PublicKey = $SERVER_PUBLIC_KEY
-Endpoint = [$SERVER_ENDPOINT]:$SERVER_PORT
-AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = $FORMATTED_ENDPOINT:$SERVER_PORT
+AllowedIPs = 0.0.0.0/0$( [ "$DUAL_STACK" = true ] && echo ", ::/0" )
 PersistentKeepalive = 25
 EOF
 
-    # Add client to server configuration
-    cat >> "$WG_CONF" << EOF
+# Append to server config
+{
+    echo ""
+    echo "[Peer]"
+    if [ "$DUAL_STACK" = true ]; then
+        echo "# $CLIENT_NAME (IPv4: $CLIENT_IPV4, IPv6: $CLIENT_IPV6)"
+        echo "PublicKey = $CLIENT_PUBLIC_KEY"
+        echo "AllowedIPs = $CLIENT_IPV4/32, $CLIENT_IPV6/128"
+    else
+        echo "# $CLIENT_NAME (IPv4: $CLIENT_IPV4)"
+        echo "PublicKey = $CLIENT_PUBLIC_KEY"
+        echo "AllowedIPs = $CLIENT_IPV4/32"
+    fi
+} >> "$WG_CONF"
 
-[Peer]
-# Client: $CLIENT_NAME (IPv4: $CLIENT_IPV4, IPv6: $CLIENT_IPV6)
-PublicKey = $CLIENT_PUBLIC_KEY
-AllowedIPs = $CLIENT_IPV4/32, $CLIENT_IPV6/128
-EOF
-
-else
-    # IPv4 only client configuration
-    cat > "$CLIENT_CONF" << EOF
-[Interface]
-PrivateKey = $CLIENT_PRIVATE_KEY
-Address = $CLIENT_IPV4/24
-DNS = 8.8.8.8, 1.1.1.1
-MTU = 1420
-
-[Peer]
-PublicKey = $SERVER_PUBLIC_KEY
-Endpoint = $SERVER_ENDPOINT:$SERVER_PORT
-AllowedIPs = 0.0.0.0/0
-PersistentKeepalive = 25
-EOF
-
-    # Add client to server configuration
-    cat >> "$WG_CONF" << EOF
-
-[Peer]
-# Client: $CLIENT_NAME (IPv4: $CLIENT_IPV4)
-PublicKey = $CLIENT_PUBLIC_KEY
-AllowedIPs = $CLIENT_IPV4/32
-EOF
-
-fi
-
-# Reload WireGuard configuration
-echo "Reloading WireGuard configuration..."
-if systemctl is-active --quiet wg-quick@wg0; then
+# Reload WireGuard
+echo -e "${GREEN}+ Reloading WireGuard interface wg0...${NC}"
+if command -v systemctl >/dev/null && systemctl is-active --quiet wg-quick@wg0; then
+    wg syncconf wg0 <(wg-quick strip wg0)
+elif ip link show wg0 >/dev/null 2>&1; then
     wg syncconf wg0 <(wg-quick strip wg0)
 else
-    echo -e "${YELLOW}Warning: WireGuard service is not running. Starting it now...${NC}"
-    systemctl start wg-quick@wg0
+    echo -e "${YELLOW}Warning: Interface wg0 is not up. Try: wg-quick up wg0${NC}"
 fi
 
-# Success message
+# Show result
 echo ""
-echo -e "${GREEN}✓ Client '$CLIENT_NAME' added successfully!${NC}"
-echo ""
-echo "Client Information:"
-echo "  Name: $CLIENT_NAME"
-echo "  IPv4 Address: $CLIENT_IPV4/24"
-if [ "$DUAL_STACK" = true ]; then
-    echo "  IPv6 Address: $CLIENT_IPV6/64"
-fi
-echo "  Configuration file: $CLIENT_CONF"
-echo ""
+echo -e "${GREEN}✓ Client '$CLIENT_NAME' added successfully.${NC}"
+echo "IPv4: $CLIENT_IPV4/24"
+[ "$DUAL_STACK" = true ] && echo "IPv6: $CLIENT_IPV6/64"
+echo "Config: $CLIENT_CONF"
 
-# Display QR code for mobile devices
-echo "QR Code for mobile devices:"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Optional QR
+if command -v qrencode >/dev/null; then
+    echo ""
+    echo "QR for mobile apps:"
+    qrencode -t ansiutf8 < "$CLIENT_CONF"
+else
+    echo -e "${YELLOW}(qrencode not installed, skipping QR code)${NC}"
+fi

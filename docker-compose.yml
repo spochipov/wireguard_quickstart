@@ -19,7 +19,9 @@ services:
       # Mount system directories for persistence
       - ./docker-data/sysctl:/etc/sysctl.d
       - ./docker-data/ufw:/etc/ufw
-      - ./docker-data/scripts:/usr/local/bin
+      - ./wg-add-client.sh:/usr/local/bin/wg-add-client
+      - ./wg-list-clients.sh:/usr/local/bin/wg-list-clients
+      - ./wg-remove-client.sh:/usr/local/bin/wg-remove-client
     environment:
       - DEBIAN_FRONTEND=noninteractive
       - TZ=UTC
