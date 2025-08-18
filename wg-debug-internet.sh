@@ -189,8 +189,8 @@ check_firewall_rules() {
     
     # Check NAT rules
     echo "Checking NAT rules..."
-    NAT_RULES=$(iptables -t nat -L POSTROUTING -n 2>/dev/null | grep MASQUERADE | wc -l || echo "0")
-    if [ "$NAT_RULES" -gt 0 ]; then
+    NAT_RULES=$(iptables -t nat -L POSTROUTING -n 2>/dev/null | grep MASQUERADE | wc -l | tr -d ' \n' || echo "0")
+    if [ "$NAT_RULES" -gt 0 ] 2>/dev/null; then
         success "NAT/MASQUERADE rules found: $NAT_RULES"
         echo "NAT rules:"
         iptables -t nat -L POSTROUTING -n | grep MASQUERADE
@@ -202,8 +202,8 @@ check_firewall_rules() {
     
     # Check FORWARD rules
     echo -e "\nChecking FORWARD rules..."
-    FORWARD_ACCEPT=$(iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT.*wg0" | wc -l || echo "0")
-    if [ "$FORWARD_ACCEPT" -gt 0 ]; then
+    FORWARD_ACCEPT=$(iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT.*wg0" | wc -l | tr -d ' \n' || echo "0")
+    if [ "$FORWARD_ACCEPT" -gt 0 ] 2>/dev/null; then
         success "FORWARD rules for wg0 found: $FORWARD_ACCEPT"
     else
         error "No FORWARD rules for wg0 found!"
@@ -213,8 +213,8 @@ check_firewall_rules() {
     
     # Check INPUT rules for WireGuard port
     LISTEN_PORT=$(grep "^ListenPort" "$WG_CONF" 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "51820")
-    INPUT_RULES=$(iptables -L INPUT -n 2>/dev/null | grep ":$LISTEN_PORT " | wc -l || echo "0")
-    if [ "$INPUT_RULES" -gt 0 ]; then
+    INPUT_RULES=$(iptables -L INPUT -n 2>/dev/null | grep ":$LISTEN_PORT " | wc -l | tr -d ' \n' || echo "0")
+    if [ "$INPUT_RULES" -gt 0 ] 2>/dev/null; then
         success "INPUT rule for WireGuard port $LISTEN_PORT found"
     else
         warn "No specific INPUT rule for WireGuard port $LISTEN_PORT"
@@ -380,8 +380,8 @@ check_common_issues() {
     fi
     
     # Check for multiple WireGuard interfaces
-    WG_INTERFACES=$(ip link show | grep "wg[0-9]" | wc -l || echo "0")
-    if [ "$WG_INTERFACES" -gt 1 ]; then
+    WG_INTERFACES=$(ip link show | grep "wg[0-9]" | wc -l | tr -d ' \n' || echo "0")
+    if [ "$WG_INTERFACES" -gt 1 ] 2>/dev/null; then
         warn "Multiple WireGuard interfaces detected: $WG_INTERFACES"
         echo "  This may cause routing conflicts"
         ip link show | grep "wg[0-9]"
