@@ -283,6 +283,8 @@ download_client_scripts() {
         "wg-add-client.sh:wg-add-client"
         "wg-remove-client.sh:wg-remove-client"
         "wg-list-clients.sh:wg-list-clients"
+        "wg-debug-internet.sh:wg-debug-internet"
+        "wg-performance-test.sh:wg-performance-test"
     )
     
     for script_info in "${scripts[@]}"; do
