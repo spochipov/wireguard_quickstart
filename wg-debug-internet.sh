@@ -189,7 +189,7 @@ check_firewall_rules() {
     
     # Check NAT rules
     echo "Checking NAT rules..."
-    NAT_RULES=$(iptables -t nat -L POSTROUTING -n 2>/dev/null | grep -c MASQUERADE || echo "0")
+    NAT_RULES=$(iptables -t nat -L POSTROUTING -n 2>/dev/null | grep MASQUERADE | wc -l || echo "0")
     if [ "$NAT_RULES" -gt 0 ]; then
         success "NAT/MASQUERADE rules found: $NAT_RULES"
         echo "NAT rules:"
@@ -202,7 +202,7 @@ check_firewall_rules() {
     
     # Check FORWARD rules
     echo -e "\nChecking FORWARD rules..."
-    FORWARD_ACCEPT=$(iptables -L FORWARD -n 2>/dev/null | grep -c "ACCEPT.*wg0" || echo "0")
+    FORWARD_ACCEPT=$(iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT.*wg0" | wc -l || echo "0")
     if [ "$FORWARD_ACCEPT" -gt 0 ]; then
         success "FORWARD rules for wg0 found: $FORWARD_ACCEPT"
     else
@@ -213,7 +213,7 @@ check_firewall_rules() {
     
     # Check INPUT rules for WireGuard port
     LISTEN_PORT=$(grep "^ListenPort" "$WG_CONF" 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "51820")
-    INPUT_RULES=$(iptables -L INPUT -n 2>/dev/null | grep -c ":$LISTEN_PORT " || echo "0")
+    INPUT_RULES=$(iptables -L INPUT -n 2>/dev/null | grep ":$LISTEN_PORT " | wc -l || echo "0")
     if [ "$INPUT_RULES" -gt 0 ]; then
         success "INPUT rule for WireGuard port $LISTEN_PORT found"
     else
@@ -380,7 +380,7 @@ check_common_issues() {
     fi
     
     # Check for multiple WireGuard interfaces
-    WG_INTERFACES=$(ip link show | grep -c "wg[0-9]" || echo "0")
+    WG_INTERFACES=$(ip link show | grep "wg[0-9]" | wc -l || echo "0")
     if [ "$WG_INTERFACES" -gt 1 ]; then
         warn "Multiple WireGuard interfaces detected: $WG_INTERFACES"
         echo "  This may cause routing conflicts"

@@ -22,6 +22,8 @@ services:
       - ./wg-add-client.sh:/usr/local/bin/wg-add-client
       - ./wg-list-clients.sh:/usr/local/bin/wg-list-clients
       - ./wg-remove-client.sh:/usr/local/bin/wg-remove-client
+      - ./wg-debug-internet.sh:/usr/local/bin/wg-debug-internet
+      - ./wg-performance-test.sh:/usr/local/bin/wg-performance-test
     environment:
       - DEBIAN_FRONTEND=noninteractive
       - TZ=UTC
