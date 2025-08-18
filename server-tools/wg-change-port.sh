@@ -149,6 +149,15 @@ else
   wg-quick up wg0
 fi
 
+# Ensure runtime (kernel) listen port matches the config; if not, set it directly
+if command -v wg >/dev/null 2>&1; then
+  RUNTIME_PORT=$(wg show wg0 2>/dev/null | awk '/listening port/ {print $3}' || echo "")
+  if [ -n "$RUNTIME_PORT" ] && [ "$RUNTIME_PORT" != "$NEW_PORT" ]; then
+    echo "Runtime listening port ($RUNTIME_PORT) differs from desired ($NEW_PORT). Applying with 'wg set'..."
+    wg set wg0 listen-port "$NEW_PORT" >/dev/null 2>&1 || echo "Warning: 'wg set' failed to apply listen-port to runtime"
+  fi
+fi
+
 # Save iptables rules if possible
 if [ -d /etc/iptables ]; then
   iptables-save > /etc/iptables/rules.v4 || true
