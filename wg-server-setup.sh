@@ -218,6 +218,10 @@ generate_keys() {
 configure_firewall() {
     log "Configuring basic firewall rules..."
     
+    # Flush existing rules to start fresh
+    iptables -F INPUT
+    iptables -F FORWARD
+    
     # Allow SSH (important!)
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
     
@@ -350,10 +354,13 @@ EOF
 start_wireguard() {
     log "Starting WireGuard service..."
     
+    # Force down the interface to apply new config
+    wg-quick down wg0 2>/dev/null || true
+    
     # Try to use systemctl, fallback to manual start if in container
     if command -v systemctl >/dev/null 2>&1 && systemctl --version >/dev/null 2>&1; then
         systemctl enable wg-quick@wg0 2>/dev/null || warn "Could not enable WireGuard service (normal in containers)"
-        systemctl start wg-quick@wg0 2>/dev/null || {
+        systemctl restart wg-quick@wg0 2>/dev/null || {
             warn "systemctl failed, trying manual start..."
             wg-quick up wg0
         }
