@@ -280,12 +280,14 @@ PreUp = ethtool -K $INTERFACE rx-udp-gro-forwarding on 2>/dev/null || true
 PreUp = ethtool -K $INTERFACE rx-gro-list off 2>/dev/null || true
 
 # Firewall rules with performance optimizations
+PostUp = iptables -P FORWARD ACCEPT
+PostUp = ip6tables -P FORWARD ACCEPT
 PostUp = iptables -t nat -A POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE
 PostUp = ip6tables -t nat -A POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE
-PostUp = iptables -A FORWARD -i wg0 -j ACCEPT
-PostUp = ip6tables -A FORWARD -i wg0 -j ACCEPT
-PostUp = iptables -A FORWARD -o wg0 -j ACCEPT
-PostUp = ip6tables -A FORWARD -o wg0 -j ACCEPT
+PostUp = iptables -I FORWARD 1 -i wg0 -j ACCEPT
+PostUp = ip6tables -I FORWARD 1 -i wg0 -j ACCEPT
+PostUp = iptables -I FORWARD 1 -o wg0 -j ACCEPT
+PostUp = ip6tables -I FORWARD 1 -o wg0 -j ACCEPT
 
 # Optimize interface settings for performance
 PostUp = echo 2 > /sys/class/net/%i/queues/rx-0/rps_cpus 2>/dev/null || true
@@ -444,7 +446,7 @@ test_wireguard_connectivity() {
     log "Testing WireGuard connectivity..."
     
     # Wait a moment for interface to fully initialize
-    sleep 3
+    sleep 5
     
     # Check if WireGuard interface is up
     if ! wg show wg0 >/dev/null 2>&1; then
@@ -468,15 +470,27 @@ test_wireguard_connectivity() {
         return 1
     fi
     
-    # Check NAT rules
-    NAT_RULES=$(iptables -t nat -L POSTROUTING -n 2>/dev/null | grep MASQUERADE | grep "${IPV4_NETWORK}.0/24" | wc -l)
+    # Check NAT rules with retry
+    for i in {1..5}; do
+        NAT_RULES=$(iptables -t nat -L POSTROUTING -n 2>/dev/null | grep MASQUERADE | grep "${IPV4_NETWORK}.0/24" | wc -l)
+        if [ "$NAT_RULES" -gt 0 ]; then
+            break
+        fi
+        sleep 1
+    done
     if [ "$NAT_RULES" -eq 0 ]; then
         error "NAT rules for WireGuard network not found!"
         return 1
     fi
     
-    # Check FORWARD rules
-    FORWARD_RULES=$(iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT.*wg0" | wc -l)
+    # Check FORWARD rules with retry
+    for i in {1..5}; do
+        FORWARD_RULES=$(iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT.*wg0" | wc -l)
+        if [ "$FORWARD_RULES" -gt 0 ]; then
+            break
+        fi
+        sleep 1
+    done
     if [ "$FORWARD_RULES" -eq 0 ]; then
         error "FORWARD rules for wg0 not found!"
         return 1
@@ -512,7 +526,6 @@ main() {
     optimize_kernel
     generate_keys
     configure_firewall
-    configure_iptables
     create_wg_config
     download_client_scripts
     create_info_script
