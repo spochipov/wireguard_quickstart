@@ -325,7 +325,9 @@ download_client_scripts() {
                     warn "Failed to download $source_file, retrying ($retry_count/$max_retries)..."
                     sleep 2
                 else
-                    error "Failed to download $source_file after $max_retries attempts"
+                    warn "Failed to download $source_file after $max_retries attempts, skipping."
+                    # Don't abort entire setup for optional tools; move on to next script
+                    break
                 fi
             fi
         done
