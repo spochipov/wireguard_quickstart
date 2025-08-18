@@ -103,26 +103,56 @@ optimize_kernel() {
 net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
 
-# TCP optimizations (available in most environments)
-net.ipv4.tcp_rmem = 4096 65536 16777216
-net.ipv4.tcp_wmem = 4096 65536 16777216
+# Network buffer optimizations for high throughput
+net.core.rmem_default = 262144
+net.core.rmem_max = 134217728
+net.core.wmem_default = 262144
+net.core.wmem_max = 134217728
+net.core.netdev_max_backlog = 5000
+net.core.netdev_budget = 600
+
+# TCP optimizations for maximum performance
+net.ipv4.tcp_rmem = 8192 262144 134217728
+net.ipv4.tcp_wmem = 8192 262144 134217728
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_fack = 1
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_moderate_rcvbuf = 1
+net.ipv4.tcp_rfc1337 = 1
 
-# UDP optimizations
-net.ipv4.udp_rmem_min = 8192
-net.ipv4.udp_wmem_min = 8192
+# UDP optimizations for WireGuard
+net.ipv4.udp_rmem_min = 16384
+net.ipv4.udp_wmem_min = 16384
+net.ipv4.udp_mem = 102400 873800 16777216
 
-# Connection tracking optimizations (if available)
+# Connection tracking optimizations
+net.netfilter.nf_conntrack_max = 1048576
 net.netfilter.nf_conntrack_tcp_timeout_established = 7200
 net.netfilter.nf_conntrack_udp_timeout = 60
 net.netfilter.nf_conntrack_udp_timeout_stream = 120
+net.netfilter.nf_conntrack_generic_timeout = 120
 
 # IPv6 optimizations
 net.ipv6.conf.all.accept_ra = 0
 net.ipv6.conf.default.accept_ra = 0
 net.ipv6.conf.all.autoconf = 0
 net.ipv6.conf.default.autoconf = 0
+
+# Memory and CPU optimizations
+vm.swappiness = 10
+vm.dirty_ratio = 15
+vm.dirty_background_ratio = 5
+
+# Network security optimizations that don't hurt performance
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
 EOF
 
     # Apply settings with error handling
@@ -210,17 +240,25 @@ Address = ${IPV4_SERVER}/24, ${IPV6_SERVER}/64
 ListenPort = 51820
 PrivateKey = $SERVER_PRIVATE_KEY
 
-# Performance optimizations
-MTU = 1420
-Table = off
+# Performance optimizations for maximum speed
+MTU = 1500
 
-# Firewall rules
+# Advanced performance settings
+PreUp = echo 'module wireguard +p' > /sys/kernel/debug/dynamic_debug/control 2>/dev/null || true
+PreUp = ethtool -K $INTERFACE rx-udp-gro-forwarding on 2>/dev/null || true
+PreUp = ethtool -K $INTERFACE rx-gro-list off 2>/dev/null || true
+
+# Firewall rules with performance optimizations
 PostUp = iptables -t nat -A POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE
 PostUp = ip6tables -t nat -A POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE
 PostUp = iptables -A FORWARD -i %i -j ACCEPT
 PostUp = ip6tables -A FORWARD -i %i -j ACCEPT
 PostUp = iptables -A FORWARD -o %i -j ACCEPT
 PostUp = ip6tables -A FORWARD -o %i -j ACCEPT
+
+# Optimize interface settings for performance
+PostUp = echo 2 > /sys/class/net/%i/queues/rx-0/rps_cpus 2>/dev/null || true
+PostUp = echo 2 > /sys/class/net/%i/queues/tx-0/xps_cpus 2>/dev/null || true
 
 PostDown = iptables -t nat -D POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE
 PostDown = ip6tables -t nat -D POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE
@@ -233,7 +271,7 @@ PostDown = ip6tables -D FORWARD -o %i -j ACCEPT
 EOF
 
     chmod 600 /etc/wireguard/wg0.conf
-    log "WireGuard configuration created"
+    log "WireGuard configuration created with performance optimizations"
 }
 
 # Download and install client management scripts

@@ -128,13 +128,17 @@ CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
 
 echo "Generating client configuration..."
 
-# Write client config using heredoc
+# Write client config using heredoc with performance optimizations
 cat > "$CLIENT_CONF" <<EOF
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
 Address = $CLIENT_IPV4/24$( [ "$DUAL_STACK" = true ] && echo ", $CLIENT_IPV6/64" )
-DNS = 8.8.8.8, 1.1.1.1$( [ "$DUAL_STACK" = true ] && echo ", 2001:4860:4860::8888, 2606:4700:4700::1111" )
-MTU = 1420
+DNS = 1.1.1.1, 8.8.8.8$( [ "$DUAL_STACK" = true ] && echo ", 2606:4700:4700::1111, 2001:4860:4860::8888" )
+MTU = 1500
+
+# Performance optimizations for client
+PreUp = echo 'Performance mode enabled for WireGuard client'
+PostUp = echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true
 
 [Peer]
 PublicKey = $SERVER_PUBLIC_KEY
