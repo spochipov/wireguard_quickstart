@@ -5,11 +5,13 @@
 ВАЖНО: директория `clients/` не изменяется этими инструкциями (конфиги клиентов хранятся там).
 
 1) Скачайте репозиторий / установочные скрипты (на сервере)
+из каталога, куда хотите скачать
 ```bash
-# из каталога, куда хотите скачать
 git clone https://github.com/spochipov/wireguard_quickstart.git
 cd wireguard_quickstart
-# или только wg-server-setup.sh
+```
+или только wg-server-setup.sh
+```bash
 wget https://raw.githubusercontent.com/spochipov/wireguard_quickstart/main/wg-server-setup.sh
 chmod +x wg-server-setup.sh
 ```
