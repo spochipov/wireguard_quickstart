@@ -47,9 +47,20 @@ fi
 echo -e "${GREEN}+ Adding new WireGuard client: $CLIENT_NAME${NC}"
 
 # Read server config
-SERVER_PRIVATE_KEY=$(grep '^PrivateKey' "$WG_CONF" | cut -d' ' -f3)
-SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
-SERVER_PORT=$(grep '^ListenPort' "$WG_CONF" | cut -d' ' -f3)
+# Read server private key and derive public key (robust parsing)
+SERVER_PRIVATE_KEY=$(grep -E '^\s*PrivateKey\s*=' "$WG_CONF" | head -1 | sed -E 's/.*=[[:space:]]*//')
+if [ -n "$SERVER_PRIVATE_KEY" ]; then
+    SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
+else
+    echo -e "${YELLOW}Warning: Server private key not found in $WG_CONF${NC}"
+    SERVER_PUBLIC_KEY=""
+fi
+
+# Parse ListenPort from server config in a robust way; default to 51820 if not found
+SERVER_PORT=$(grep -E '^\s*ListenPort\s*=' "$WG_CONF" | head -1 | sed -E 's/.*=[[:space:]]*([0-9]+).*/\1/' || true)
+if ! echo "$SERVER_PORT" | grep -Eq '^[0-9]+$'; then
+    SERVER_PORT=51820
+fi
 
 # Detect public IPv4 for Endpoint (IPv4 only)
 echo -e "${GREEN}+ Detecting public IPv4...${NC}"

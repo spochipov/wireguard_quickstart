@@ -1,0 +1,83 @@
+Набор команд для применения на сервере (выполните по одному шагу, проверяя результаты).
+
+1) Просмотр текущего состояния (рекомендуется)
+sudo wg show wg0
+sudo ip addr show wg0
+sudo ip route show
+sudo iptables -L INPUT -n --line-numbers
+sudo iptables -L FORWARD -n --line-numbers
+sudo iptables -t nat -L POSTROUTING -n --line-numbers
+sudo ip6tables -L INPUT -n --line-numbers || true
+sudo nft list ruleset || true
+
+2) Добавить INPUT правило для WireGuard (UDP 51820)
+# Добавляет правило в начало цепочки INPUT (IPv4)
+sudo iptables -I INPUT 1 -p udp --dport 51820 -m comment --comment "allow WireGuard" -j ACCEPT
+# IPv6 (если используется ip6tables)
+sudo ip6tables -I INPUT 1 -p udp --dport 51820 -m comment --comment "allow WireGuard v6" -j ACCEPT
+
+3) Явные FORWARD правила (IPv4)
+# Разрешить трафик от клиентов через внешний интерфейс
+sudo iptables -C FORWARD -i wg0 -o ens192 -j ACCEPT 2>/dev/null || sudo iptables -A FORWARD -i wg0 -o ens192 -j ACCEPT
+# Разрешить возвращённый трафик
+sudo iptables -C FORWARD -i ens192 -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || sudo iptables -A FORWARD -i ens192 -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+# IPv6 (если нужен форвард IPv6)
+sudo ip6tables -C FORWARD -i wg0 -o ens192 -j ACCEPT 2>/dev/null || sudo ip6tables -A FORWARD -i wg0 -o ens192 -j ACCEPT
+sudo ip6tables -C FORWARD -i ens192 -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || sudo ip6tables -A FORWARD -i ens192 -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+4) NAT (MASQUERADE) — привязать к внешнему интерфейсу (если ещё не привязано)
+sudo iptables -t nat -C POSTROUTING -s 10.174.38.0/24 -o ens192 -j MASQUERADE 2>/dev/null || sudo iptables -t nat -A POSTROUTING -s 10.174.38.0/24 -o ens192 -j MASQUERADE
+
+5) Проверить ip_forward (и включить, если отключён)
+sudo sysctl -w net.ipv4.ip_forward=1
+sudo sysctl -w net.ipv6.conf.all.forwarding=1
+# Чтобы сделать постоянно:
+# echo 'net.ipv4.ip_forward = 1' | sudo tee -a /etc/sysctl.conf
+# echo 'net.ipv6.conf.all.forwarding = 1' | sudo tee -a /etc/sysctl.conf
+# sudo sysctl -p
+
+6) Проверки после применения
+sudo iptables -L INPUT -n --line-numbers
+sudo iptables -L FORWARD -n --line-numbers
+sudo iptables -t nat -L POSTROUTING -n --line-numbers
+sudo ip6tables -L INPUT -n --line-numbers || true
+sudo nft list ruleset || true
+
+7) Тесты сетевого выхода с интерфейса wg0
+# Узнать IP интерфейса wg0, затем:
+sudo ip route get 8.8.8.8 from 10.174.38.1
+# Попробовать curl с интерфейса wg0 (покажет внешний IP после SNAT)
+curl --interface 10.174.38.1 -sS https://ifconfig.co || echo "curl failed"
+
+8) Сохранение правил (Debian/Ubuntu)
+sudo apt update && sudo apt install -y iptables-persistent netfilter-persistent
+# Во время установки согласитесь сохранить текущие правила, либо:
+sudo netfilter-persistent save
+# Или явно:
+sudo iptables-save | sudo tee /etc/iptables/rules.v4
+sudo ip6tables-save | sudo tee /etc/iptables/rules.v6
+
+9) Если используется nftables вместо iptables
+# Добавьте аналогичные правила в таблицу inet filter (input/forward) и NAT (ip nat или masquerade в nft)
+# Пример добавления accept в nft (проверьте имя таблицы/цепочки):
+sudo nft add rule inet filter input udp dport 51820 accept comment "allow WireGuard"
+sudo nft add rule inet filter forward iif "wg0" oif "ens192" accept
+# NAT в nft (пример):
+# sudo nft add table ip nat
+# sudo nft 'add chain ip nat postrouting { type nat hook postrouting priority 100 ; }'
+# sudo nft add rule ip nat postrouting oifname "ens192" ip saddr 10.174.38.0/24 masquerade
+
+10) Примечания и отладка
+- Если у вас включены firewalld или ufw, внесите правила через их интерфейс (ufw allow 51820/udp, или firewall-cmd --add-port=51820/udp --permanent && firewall-cmd --reload).
+- Если wg-debug-internet продолжает жаловаться на "WireGuard interface cannot reach internet directly" — это нормально для интерфейса wg0; важнее, чтобы клиентский трафик SNAT'ился и имел маршрут.
+- Если IPv6 должен работать, убедитесь, что внешний роутер у провайдера знает и маршрутизирует ваш префикс (или используйте подходящую маршрутизацию через провайдера).
+
+11) Быстрая команда для применения всех правил (если уверены)
+# ВНИМАНИЕ: запускайте только если понимаете последствия и у вас доступ по консоли.
+sudo iptables -I INPUT 1 -p udp --dport 51820 -m comment --comment "allow WireGuard" -j ACCEPT
+sudo iptables -C FORWARD -i wg0 -o ens192 -j ACCEPT 2>/dev/null || sudo iptables -A FORWARD -i wg0 -o ens192 -j ACCEPT
+sudo iptables -C FORWARD -i ens192 -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || sudo iptables -A FORWARD -i ens192 -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+sudo iptables -t nat -C POSTROUTING -s 10.174.38.0/24 -o ens192 -j MASQUERADE 2>/dev/null || sudo iptables -t nat -A POSTROUTING -s 10.174.38.0/24 -o ens192 -j MASQUERADE
+
+Конец файла.
