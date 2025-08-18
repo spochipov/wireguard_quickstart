@@ -51,27 +51,20 @@ SERVER_PRIVATE_KEY=$(grep '^PrivateKey' "$WG_CONF" | cut -d' ' -f3)
 SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
 SERVER_PORT=$(grep '^ListenPort' "$WG_CONF" | cut -d' ' -f3)
 
-# Detect public IPv6 or IPv4 for Endpoint
-echo -e "${GREEN}+ Detecting public IP...${NC}"
+# Detect public IPv4 for Endpoint (IPv4 only)
+echo -e "${GREEN}+ Detecting public IPv4...${NC}"
 
-SERVER_IPV6=$(curl -6 -s https://ifconfig.co 2>/dev/null || echo "")
 SERVER_IPV4=$(curl -4 -s https://ifconfig.co 2>/dev/null || echo "")
 
-if [[ "$SERVER_IPV6" =~ ^([0-9a-fA-F:]+)$ ]]; then
-    SERVER_ENDPOINT_IP="$SERVER_IPV6"
-elif [[ "$SERVER_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+if [[ "$SERVER_IPV4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
     SERVER_ENDPOINT_IP="$SERVER_IPV4"
 else
     SERVER_ENDPOINT_IP="YOUR_SERVER_IP"
-    echo -e "${YELLOW}Warning: Could not auto-detect external IP address. Please set manually.${NC}"
+    echo -e "${YELLOW}Warning: Could not auto-detect external IPv4 address. Please set manually.${NC}"
 fi
 
-# Format Endpoint field (IPv6 in [brackets])
-if [[ "$SERVER_ENDPOINT_IP" == *:* ]]; then
-    FORMATTED_ENDPOINT="[$SERVER_ENDPOINT_IP]"
-else
-    FORMATTED_ENDPOINT="$SERVER_ENDPOINT_IP"
-fi
+# Use IPv4 endpoint only
+FORMATTED_ENDPOINT="$SERVER_ENDPOINT_IP"
 
 echo -e "${GREEN}✓ Using Endpoint: $FORMATTED_ENDPOINT:$SERVER_PORT${NC}"
 
@@ -128,17 +121,13 @@ CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
 
 echo "Generating client configuration..."
 
-# Write client config using heredoc with performance optimizations
+# Write client config using heredoc
 cat > "$CLIENT_CONF" <<EOF
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
 Address = $CLIENT_IPV4/24$( [ "$DUAL_STACK" = true ] && echo ", $CLIENT_IPV6/64" )
 DNS = 1.1.1.1, 8.8.8.8$( [ "$DUAL_STACK" = true ] && echo ", 2606:4700:4700::1111, 2001:4860:4860::8888" )
 MTU = 1500
-
-# Performance optimizations for client
-PreUp = echo 'Performance mode enabled for WireGuard client'
-PostUp = echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true
 
 [Peer]
 PublicKey = $SERVER_PUBLIC_KEY

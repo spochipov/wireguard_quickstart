@@ -251,10 +251,10 @@ PreUp = ethtool -K $INTERFACE rx-gro-list off 2>/dev/null || true
 # Firewall rules with performance optimizations
 PostUp = iptables -t nat -A POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE
 PostUp = ip6tables -t nat -A POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE
-PostUp = iptables -A FORWARD -i %i -j ACCEPT
-PostUp = ip6tables -A FORWARD -i %i -j ACCEPT
-PostUp = iptables -A FORWARD -o %i -j ACCEPT
-PostUp = ip6tables -A FORWARD -o %i -j ACCEPT
+PostUp = iptables -A FORWARD -i wg0 -j ACCEPT
+PostUp = ip6tables -A FORWARD -i wg0 -j ACCEPT
+PostUp = iptables -A FORWARD -o wg0 -j ACCEPT
+PostUp = ip6tables -A FORWARD -o wg0 -j ACCEPT
 
 # Optimize interface settings for performance
 PostUp = echo 2 > /sys/class/net/%i/queues/rx-0/rps_cpus 2>/dev/null || true
@@ -262,10 +262,10 @@ PostUp = echo 2 > /sys/class/net/%i/queues/tx-0/xps_cpus 2>/dev/null || true
 
 PostDown = iptables -t nat -D POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE
 PostDown = ip6tables -t nat -D POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE
-PostDown = iptables -D FORWARD -i %i -j ACCEPT
-PostDown = ip6tables -D FORWARD -i %i -j ACCEPT
-PostDown = iptables -D FORWARD -o %i -j ACCEPT
-PostDown = ip6tables -D FORWARD -o %i -j ACCEPT
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT
+PostDown = ip6tables -D FORWARD -i wg0 -j ACCEPT
+PostDown = iptables -D FORWARD -o wg0 -j ACCEPT
+PostDown = ip6tables -D FORWARD -o wg0 -j ACCEPT
 
 # Clients will be added below this line
 EOF
