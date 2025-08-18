@@ -198,7 +198,7 @@ docker exec wireguard-test-server wg show
 ```bash
 # Полный сброс
 docker-compose down -v
-sudo rm -rf docker-data/
+rm -rf docker-data/
 docker-compose up -d wireguard-server
 
 # Сброс только WireGuard

@@ -16,7 +16,7 @@ chmod +x wg-server-setup.sh
 
 2) Запустите установочный скрипт
 ```bash
-sudo ./wg-server-setup.sh
+./wg-server-setup.sh
 ```
 Что делает скрипт:
 - Обновляет пакеты и устанавливает зависимости (wireguard, iptables и пр.).
@@ -43,10 +43,10 @@ iptables -L FORWARD -n --line-numbers
 4) Добавление клиента
 ```bash
 # Если утилиты установлены в /usr/local/bin:
-sudo /usr/local/bin/wg-add-client <client_name>
+/usr/local/bin/wg-add-client <client_name>
 
 # Альтернативно (если запускаете из текущего каталога):
-sudo ./wg-add-client.sh <client_name>
+./wg-add-client.sh <client_name>
 ```
 - Файл клиента сохранится в `/etc/wireguard/clients/<client_name>.conf`.
 - Скрипт автоматически добавит Peer в `/etc/wireguard/wg0.conf` и выполнит `wg syncconf`/reload.
@@ -62,7 +62,7 @@ qrencode -t ansiutf8 < /etc/wireguard/clients/<client_name>.conf
 Утилита: `change-wg-port` (скопирована в `/usr/local/bin` во время установки, если скрипт присутствует в репозитории).
 ```bash
 # Пример: сменить на 51821
-sudo /usr/local/bin/change-wg-port 51821
+/usr/local/bin/change-wg-port 51821
 
 # Что делает:
 # - Резервная копия wg0.conf
@@ -76,23 +76,23 @@ sudo /usr/local/bin/change-wg-port 51821
 7) Сохранение правил firewall между перезагрузками
 Рекомендуется установить:
 ```bash
-sudo apt update
-sudo apt install -y iptables-persistent netfilter-persistent
+apt update
+apt install -y iptables-persistent netfilter-persistent
 # во время установки согласитесь сохранить текущие правила
-sudo netfilter-persistent save
+netfilter-persistent save
 ```
 Если пакет не устанавливается, скрипты сохраняют правила в `/etc/iptables/rules.v4` и `/etc/iptables/rules.v6` (если каталог существует).
 
 8) Диагностика проблем с доступом в интернет (сервер)
 - Запустите диагностический скрипт:
 ```bash
-sudo /usr/local/bin/wg-debug-internet    # если установлен в /usr/local/bin
+/usr/local/bin/wg-debug-internet    # если установлен в /usr/local/bin
 # или (из репозитория)
-sudo ./wg-debug-internet.sh
+./wg-debug-internet.sh
 ```
 - Для расширенного сбора логов/правил:
 ```bash
-sudo ./scripts/run-wg-diagnostics-and-collect.sh
+./scripts/run-wg-diagnostics-and-collect.sh
 # Вывод сохраняется в /tmp/wg-diagnostics-<timestamp>
 ```
 

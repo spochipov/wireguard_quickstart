@@ -5,7 +5,7 @@
 Список скриптов и назначение
 - change-wg-port.sh
   - Назначение: безопасно изменить ListenPort в `/etc/wireguard/wg0.conf`, обновить правила firewall (iptables/ip6tables), попытаться обновить UFW/Firewalld и сохранить правила через netfilter-persistent.
-  - Использование: `sudo change-wg-port <new_port>` (после установки скрипт копируется в `/usr/local/bin/change-wg-port`).
+  - Использование: `change-wg-port <new_port>` (после установки скрипт копируется в `/usr/local/bin/change-wg-port`).
   - Примечание: делает резервную копию `wg0.conf` перед изменением.
 
 - wg-firewall-recommendations.sh
@@ -18,11 +18,11 @@
 
 - clean-duplicates-and-save.sh
   - Назначение: удалить дублирующиеся правила INPUT для порта WireGuard и сохранить итоговые правила в `/etc/iptables/rules.v4` и `/etc/iptables/rules.v6`.
-  - Использование: `sudo ./clean-duplicates-and-save.sh`
+  - Использование: `./clean-duplicates-and-save.sh`
 
 - run-wg-diagnostics-and-collect.sh
   - Назначение: запустить `wg-debug-internet.sh`, снять снимки iptables/ip6tables/nft, маршруты и попытаться выполнить curl через интерфейс wg0; сохранить выводы в `/tmp/wg-diagnostics-<timestamp>`.
-  - Использование: `sudo ./run-wg-diagnostics-and-collect.sh`
+  - Использование: `./run-wg-diagnostics-and-collect.sh`
 
 - WG_apply_commands.txt
   - Назначение: набор рекомендуемых команд для ручного применения (добавление правил, NAT, проверка ip_forward и т.д.)

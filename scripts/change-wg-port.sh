@@ -3,7 +3,7 @@
 # Сменить ListenPort в /etc/wireguard/wg0.conf, обновить правила firewall и перезапустить WireGuard.
 #
 # Использование:
-#   sudo ./scripts/change-wg-port.sh 51821
+#   ./scripts/change-wg-port.sh 51821
 #
 set -euo pipefail
 
@@ -12,7 +12,7 @@ BIN_TARGET="/usr/local/bin/change-wg-port"
 
 usage() {
   echo "Usage: $0 <new_port>"
-  echo "Example: sudo $0 51821"
+  echo "Example: $0 51821"
   exit 1
 }
 

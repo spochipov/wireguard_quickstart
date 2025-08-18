@@ -2,7 +2,7 @@
 # Удалить дублирующиеся INPUT-правила для UDP 51820 (WireGuard) и сохранить правила.
 # Запускать от root:
 #   chmod +x scripts/clean-duplicates-and-save.sh
-#   sudo ./scripts/clean-duplicates-and-save.sh
+#   ./scripts/clean-duplicates-and-save.sh
 #
 set -euo pipefail
 
