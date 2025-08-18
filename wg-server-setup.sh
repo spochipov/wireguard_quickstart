@@ -7,6 +7,8 @@
 
 set -euo pipefail
 
+DEFAULT_LISTEN_PORT=51820
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -225,8 +227,8 @@ configure_firewall() {
     # Allow SSH (important!)
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
     
-    # Allow WireGuard
-    iptables -A INPUT -p udp --dport 51820 -j ACCEPT
+    # Allow WireGuard (use configured default port)
+    iptables -A INPUT -p udp --dport ${DEFAULT_LISTEN_PORT} -j ACCEPT
     
     # Allow established and related connections
     iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
@@ -239,7 +241,7 @@ configure_firewall() {
     
     # IPv6 rules
     ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
-    ip6tables -A INPUT -p udp --dport 51820 -j ACCEPT
+    ip6tables -A INPUT -p udp --dport ${DEFAULT_LISTEN_PORT} -j ACCEPT
     ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
     ip6tables -A INPUT -i lo -j ACCEPT
     ip6tables -A INPUT -s ${IPV6_NETWORK}::/64 -j ACCEPT
@@ -255,7 +257,7 @@ create_wg_config() {
 [Interface]
 # Server configuration
 Address = ${IPV4_SERVER}/24, ${IPV6_SERVER}/64
-ListenPort = 51820
+ListenPort = ${DEFAULT_LISTEN_PORT}
 PrivateKey = $SERVER_PRIVATE_KEY
 SaveConfig = true
 
@@ -278,25 +280,33 @@ EOF
     log "WireGuard configuration created with performance optimizations"
 }
 
-# Download and install client management scripts
+# Download and install client management scripts into a grouped directory
 download_client_scripts() {
     log "Downloading client management scripts from GitHub..."
     
     local github_base_url="https://raw.githubusercontent.com/spochipov/wireguard_quickstart/main"
+    local target_dir="/usr/local/bin/wg-tools"
     local scripts=(
-        "wg-add-client.sh:wg-add-client"
-        "wg-remove-client.sh:wg-remove-client"
-        "wg-list-clients.sh:wg-list-clients"
-        "wg-debug-internet.sh:wg-debug-internet"
-        "wg-performance-test.sh:wg-performance-test"
+        "server-tools/wg-add-client.sh:wg-add-client"
+        "server-tools/wg-remove-client.sh:wg-remove-client"
+        "server-tools/wg-list-clients.sh:wg-list-clients"
+        "server-tools/wg-debug-internet.sh:wg-debug-internet"
+        "server-tools/wg-performance-test.sh:wg-performance-test"
+        "server-tools/wg-change-port.sh:wg-change-port"
     )
     
+    # Create directory for grouped tools
+    if [ ! -d "$target_dir" ]; then
+        mkdir -p "$target_dir"
+        chmod 755 "$target_dir"
+    fi
+
     for script_info in "${scripts[@]}"; do
         local source_file="${script_info%:*}"
         local target_name="${script_info#*:}"
-        local target_path="/usr/local/bin/$target_name"
+        local target_path="${target_dir}/${target_name}"
         
-        log "Downloading $source_file..."
+        log "Downloading $source_file -> $target_path ..."
         
         # Download script with retry logic
         local max_retries=3
@@ -305,7 +315,9 @@ download_client_scripts() {
         while [ $retry_count -lt $max_retries ]; do
             if wget -q --timeout=30 -O "$target_path" "$github_base_url/$source_file"; then
                 chmod +x "$target_path"
-                log "Successfully downloaded and installed $target_name"
+                log "Successfully downloaded $target_name to $target_path"
+                # Create a symlink in /usr/local/bin for backwards compatibility / convenience
+                ln -sf "$target_path" "/usr/local/bin/$target_name" 2>/dev/null || true
                 break
             else
                 retry_count=$((retry_count + 1))
@@ -319,25 +331,31 @@ download_client_scripts() {
         done
     done
     
-    log "All client management scripts downloaded successfully"
+    log "All client management scripts downloaded successfully into $target_dir (symlinks created in /usr/local/bin)"
 }
 
 # Create server info script
 create_info_script() {
     log "Creating server info script..."
     
-    cat > /usr/local/bin/wg-server-info << EOF
+    cat > /usr/local/bin/wg-server-info << 'EOF'
 #!/bin/bash
-
-# WireGuard Server Information Script
+WG_CONF="/etc/wireguard/wg0.conf"
+DEFAULT_PORT=51820
 
 echo "=== WireGuard Server Information ==="
-echo "Server IPv4: ${IPV4_SERVER}/24"
-echo "Server IPv6: ${IPV6_SERVER}/64"
-echo "Network IPv4: ${IPV4_NETWORK}.0/24"
-echo "Network IPv6: ${IPV6_NETWORK}::/64"
-echo "Listen Port: 51820"
-echo "Interface: $INTERFACE"
+
+if [ -f "$WG_CONF" ]; then
+  ADDR_LINE=$(grep -E '^Address' "$WG_CONF" 2>/dev/null | cut -d'=' -f2 | tr -d ' ' || echo "unknown")
+  LISTEN_PORT=$(grep -E '^ListenPort' "$WG_CONF" 2>/dev/null | head -1 | sed -E 's/.*=[[:space:]]*([0-9]+).*/\1/' || echo "$DEFAULT_PORT")
+else
+  ADDR_LINE="unknown"
+  LISTEN_PORT="$DEFAULT_PORT"
+fi
+
+echo "Server Address(s): $ADDR_LINE"
+echo "Listen Port: $LISTEN_PORT"
+echo "Interface: $(ip route | grep default | head -1 | awk '{print $5}' 2>/dev/null || echo "unknown")"
 echo ""
 echo "=== Active Connections ==="
 wg show
@@ -401,6 +419,11 @@ tar -czf "$BACKUP_FILE" \
     /etc/wireguard/ \
     /etc/sysctl.d/99-wireguard-performance.conf \
     /usr/local/bin/wg-add-client \
+    /usr/local/bin/wg-remove-client \
+    /usr/local/bin/wg-list-clients \
+    /usr/local/bin/wg-debug-internet \
+    /usr/local/bin/wg-performance-test \
+    /usr/local/bin/wg-change-port \
     /usr/local/bin/wg-server-info \
     /usr/local/bin/wg-backup
 
@@ -487,13 +510,15 @@ main() {
         echo "  Interface: $INTERFACE"
         echo ""
         echo "Available commands:"
-        echo "  wg-add-client <name>     - Add a new client"
-        echo "  wg-remove-client <name>  - Remove a client"
-        echo "  wg-list-clients          - List all clients and their status"
-        echo "  wg-server-info           - Show server information"
-        echo "  wg-debug-internet        - Debug connectivity issues"
-        echo "  wg-backup               - Create configuration backup"
-        echo "  wg show                 - Show active connections"
+        echo "  wg-add-client <name>       - Add a new client"
+        echo "  wg-remove-client <name>    - Remove a client"
+        echo "  wg-list-clients            - List all clients and their status"
+        echo "  wg-server-info             - Show server information"
+        echo "  wg-debug-internet          - Debug connectivity issues"
+        echo "  wg-performance-test        - Run performance/throughput tests"
+        echo "  wg-change-port <port>      - Change WireGuard listen port"
+        echo "  wg-backup                  - Create configuration backup"
+        echo "  wg show                   - Show active connections"
         echo ""
         echo "Configuration files:"
         echo "  Server: /etc/wireguard/wg0.conf"

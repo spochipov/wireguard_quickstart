@@ -26,10 +26,13 @@
 - Доп. скрипты в каталоге `scripts/` помогают с firewall и диагностикой.
 
 Куда устанавливаются утилиты
-- При установке большинство утилит копируются в `/usr/local/bin/` и становятся доступными в PATH, например:
-  - `/usr/local/bin/wg-add-client`
-  - `/usr/local/bin/wg-server-info`
-  - `/usr/local/bin/change-wg-port`
+- При установке утилиты группируются в каталог `/usr/local/bin/wg-tools/` и для обратной совместимости создаются символьные ссылки в `/usr/local/bin/`. Это упрощает поддержку и организацию инструментов.
+  - `/usr/local/bin/wg-tools/wg-add-client`
+  - `/usr/local/bin/wg-tools/wg-server-info`
+  - `/usr/local/bin/wg-tools/wg-change-port`
+  - `/usr/local/bin/wg-add-client` (симлинк в /usr/local/bin)
+  - `/usr/local/bin/wg-server-info` (симлинк в /usr/local/bin)
+  - `/usr/local/bin/wg-change-port` (симлинк в /usr/local/bin)
 
 Структура проекта (в репозитории)
 - wg-server-setup.sh
@@ -45,6 +48,17 @@
   - clean-duplicates-and-save.sh
   - run-wg-diagnostics-and-collect.sh
   - WG_apply_commands.txt
+- server-tools/   # Новая директория: копии утилит для управления сервером и документация
+  - wg-add-client.sh
+  - wg-remove-client.sh
+  - wg-list-clients.sh
+  - wg-debug-internet.sh
+  - wg-performance-test.sh
+  - wg-change-port.sh
+  - add-wg-input-rule.sh
+  - clean-duplicates-and-save.sh
+  - wg-firewall-recommendations.sh
+  - README.md
 - clients/  (локально: конфиги клиентов — оставляем без изменений)
 
 Важно: директория `clients/` содержит клиентские конфигурации и не изменяется скриптом документации.
