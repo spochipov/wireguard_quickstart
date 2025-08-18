@@ -22,7 +22,7 @@ chmod +x wg-server-setup.sh
 - Обновляет пакеты и устанавливает зависимости (wireguard, iptables и пр.).
 - Генерирует ключи и создаёт `/etc/wireguard/wg0.conf`.
 - Настраивает оптимизации sysctl для производительности.
-- Создаёт утилиты в `/usr/local/bin/` (wg-add-client, wg-server-info, wg-backup и др.).
+- Устанавливает утилиты в каталог `/usr/local/bin/wg-tools/` и создаёт символьные ссылки в `/usr/local/bin/` для обратной совместимости (например: `/usr/local/bin/wg-add-client`, `/usr/local/bin/wg-server-info`, `/usr/local/bin/wg-backup`).
 - Настраивает базовый firewall и NAT (iptables/ip6tables/nat).
 - Запускает и включит сервис `wg-quick@wg0`.
 
@@ -42,11 +42,11 @@ iptables -L FORWARD -n --line-numbers
 
 4) Добавление клиента
 ```bash
-# Если утилиты установлены в /usr/local/bin:
+# Если утилиты установлены в /usr/local/bin (или в /usr/local/bin/wg-tools/):
 /usr/local/bin/wg-add-client <client_name>
 
-# Альтернативно (если запускаете из текущего каталога):
-./wg-add-client.sh <client_name>
+# Альтернативно (если запускаете из репозитория):
+server-tools/wg-add-client.sh <client_name>
 ```
 - Файл клиента сохранится в `/etc/wireguard/clients/<client_name>.conf`.
 - Скрипт автоматически добавит Peer в `/etc/wireguard/wg0.conf` и выполнит `wg syncconf`/reload.
@@ -59,10 +59,10 @@ qrencode -t ansiutf8 < /etc/wireguard/clients/<client_name>.conf
 ```
 
 6) Смена порта WireGuard (если нужно)
-Утилита: `change-wg-port` (скопирована в `/usr/local/bin` во время установки, если скрипт присутствует в репозитории).
+Утилита: `wg-change-port` (устанавливается в `/usr/local/bin/wg-tools/` и для удобства доступна как симлинк `/usr/local/bin/wg-change-port`).
 ```bash
 # Пример: сменить на 51821
-/usr/local/bin/change-wg-port 51821
+/usr/local/bin/wg-change-port 51821
 
 # Что делает:
 # - Резервная копия wg0.conf
@@ -92,8 +92,14 @@ netfilter-persistent save
 ```
 - Для расширенного сбора логов/правил:
 ```bash
-./scripts/run-wg-diagnostics-and-collect.sh
-# Вывод сохраняется в /tmp/wg-diagnostics-<timestamp>
+# (Если нужен расширенный сбор) Используйте diagnostics вручную или запустите `wg-debug-internet` и сохраните выводы:
+# Пример:
+wg-debug-internet > /tmp/wg-debug-$(date +%s).log 2>&1
+iptables-save > /tmp/iptables-$(date +%s).rules
+ip6tables-save > /tmp/ip6tables-$(date +%s).rules
+# Сохранённые файлы можно собрать в один архив вручную:
+tar -czf /tmp/wg-diagnostics-$(date +%s).tar.gz /tmp/wg-debug-*.log /tmp/iptables-*.rules /tmp/ip6tables-*.rules
+# Это заменяет устаревший scripts/run-wg-diagnostics-and-collect.sh
 ```
 
 9) Быстрые тесты с клиента
