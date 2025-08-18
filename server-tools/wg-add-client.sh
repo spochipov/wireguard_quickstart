@@ -52,8 +52,18 @@ SERVER_PRIVATE_KEY=$(grep -E '^\s*PrivateKey\s*=' "$WG_CONF" | head -1 | sed -E 
 if [ -n "$SERVER_PRIVATE_KEY" ]; then
     SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
 else
-    echo -e "${YELLOW}Warning: Server private key not found in $WG_CONF${NC}"
-    SERVER_PUBLIC_KEY=""
+    # Fallback: try to read server public key or derive it from stored server_private.key
+    if [ -f /etc/wireguard/keys/server_public.key ]; then
+        SERVER_PUBLIC_KEY=$(cat /etc/wireguard/keys/server_public.key)
+        echo -e "${YELLOW}Warning: Server private key not found in $WG_CONF; using /etc/wireguard/keys/server_public.key${NC}"
+    elif [ -f /etc/wireguard/keys/server_private.key ]; then
+        SERVER_PRIVATE_KEY=$(cat /etc/wireguard/keys/server_private.key)
+        SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
+        echo -e "${YELLOW}Warning: Server private key not found in $WG_CONF; derived public key from /etc/wireguard/keys/server_private.key${NC}"
+    else
+        echo -e "${YELLOW}Warning: Server private key not found in $WG_CONF or /etc/wireguard/keys. Public key will be empty.${NC}"
+        SERVER_PUBLIC_KEY=""
+    fi
 fi
 
 # Parse ListenPort from server config in a robust way; default to 51820 if not found
