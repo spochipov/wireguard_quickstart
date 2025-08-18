@@ -40,6 +40,37 @@ fi
 
 log "Starting WireGuard server setup..."
 
+# Check internet connectivity before starting
+check_internet_connectivity() {
+    log "Checking internet connectivity..."
+    
+    # Test basic connectivity
+    if ! ping -c 3 8.8.8.8 >/dev/null 2>&1; then
+        error "No internet connectivity detected (ping 8.8.8.8 failed)"
+        echo "Please check your internet connection and try again"
+        exit 1
+    fi
+    
+    # Test DNS resolution
+    if ! ping -c 3 google.com >/dev/null 2>&1; then
+        error "DNS resolution failed (ping google.com failed)"
+        echo "Please check your DNS configuration and try again"
+        exit 1
+    fi
+    
+    # Test external IP detection
+    EXTERNAL_IP=$(curl -4 -s --connect-timeout 10 https://ifconfig.co 2>/dev/null || echo "")
+    if [[ ! "$EXTERNAL_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        warn "Could not detect external IP address automatically"
+        echo "External IP detection failed, but continuing with setup..."
+        EXTERNAL_IP="YOUR_SERVER_IP"
+    else
+        log "External IP detected: $EXTERNAL_IP"
+    fi
+    
+    log "Internet connectivity check passed"
+}
+
 # Generate unique network ranges to avoid conflicts
 # Using random subnets in private ranges
 generate_unique_networks() {
@@ -408,10 +439,72 @@ EOF
     log "Backup script created"
 }
 
+# Test WireGuard connectivity after installation
+test_wireguard_connectivity() {
+    log "Testing WireGuard connectivity..."
+    
+    # Wait a moment for interface to fully initialize
+    sleep 3
+    
+    # Check if WireGuard interface is up
+    if ! wg show wg0 >/dev/null 2>&1; then
+        error "WireGuard interface wg0 is not active!"
+        return 1
+    fi
+    
+    # Check if interface has IP address
+    WG_IP=$(ip addr show wg0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d'/' -f1 | head -1)
+    if [ -z "$WG_IP" ]; then
+        error "WireGuard interface has no IP address!"
+        return 1
+    fi
+    
+    log "WireGuard interface is up with IP: $WG_IP"
+    
+    # Check IP forwarding
+    IPV4_FORWARD=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
+    if [ "$IPV4_FORWARD" != "1" ]; then
+        error "IPv4 forwarding is not enabled!"
+        return 1
+    fi
+    
+    # Check NAT rules
+    NAT_RULES=$(iptables -t nat -L POSTROUTING -n 2>/dev/null | grep MASQUERADE | grep "${IPV4_NETWORK}.0/24" | wc -l)
+    if [ "$NAT_RULES" -eq 0 ]; then
+        error "NAT rules for WireGuard network not found!"
+        return 1
+    fi
+    
+    # Check FORWARD rules
+    FORWARD_RULES=$(iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT.*wg0" | wc -l)
+    if [ "$FORWARD_RULES" -eq 0 ]; then
+        error "FORWARD rules for wg0 not found!"
+        return 1
+    fi
+    
+    # Test internet connectivity from server
+    if ! ping -c 3 8.8.8.8 >/dev/null 2>&1; then
+        error "Server cannot reach internet after WireGuard setup!"
+        return 1
+    fi
+    
+    log "✓ WireGuard connectivity test passed"
+    log "✓ IP forwarding is enabled"
+    log "✓ NAT rules are configured"
+    log "✓ FORWARD rules are configured"
+    log "✓ Internet connectivity is working"
+    
+    return 0
+}
+
 # Main execution
 main() {
     log "=== WireGuard Server Setup Started ==="
     
+    # Pre-installation checks
+    check_internet_connectivity
+    
+    # Setup process
     generate_unique_networks
     install_basic_packages
     detect_interface
@@ -426,32 +519,48 @@ main() {
     create_backup_script
     start_wireguard
     
-    log "=== Setup Complete ==="
-    echo ""
-    echo -e "${GREEN}WireGuard server setup completed successfully!${NC}"
-    echo ""
-    echo "Server Information:"
-    echo "  IPv4 Network: ${IPV4_NETWORK}.0/24"
-    echo "  IPv6 Network: ${IPV6_NETWORK}::/64"
-    echo "  Server IPv4: ${IPV4_SERVER}"
-    echo "  Server IPv6: ${IPV6_SERVER}"
-    echo "  Interface: $INTERFACE"
-    echo ""
-    echo "Available commands:"
-    echo "  wg-add-client <name>     - Add a new client"
-    echo "  wg-remove-client <name>  - Remove a client"
-    echo "  wg-list-clients          - List all clients and their status"
-    echo "  wg-server-info           - Show server information"
-    echo "  wg-backup               - Create configuration backup"
-    echo "  wg show                 - Show active connections"
-    echo ""
-    echo "Configuration files:"
-    echo "  Server: /etc/wireguard/wg0.conf"
-    echo "  Clients: /etc/wireguard/clients/"
-    echo ""
-    echo -e "${YELLOW}Important: Save this network information for your records!${NC}"
-    echo "IPv4: ${IPV4_NETWORK}.0/24"
-    echo "IPv6: ${IPV6_NETWORK}::/64"
+    # Post-installation verification
+    log "=== Running Post-Installation Tests ==="
+    if test_wireguard_connectivity; then
+        log "=== Setup Complete ==="
+        echo ""
+        echo -e "${GREEN}✓ WireGuard server setup completed successfully!${NC}"
+        echo -e "${GREEN}✓ All connectivity tests passed${NC}"
+        echo ""
+        echo "Server Information:"
+        echo "  External IP: $EXTERNAL_IP"
+        echo "  IPv4 Network: ${IPV4_NETWORK}.0/24"
+        echo "  IPv6 Network: ${IPV6_NETWORK}::/64"
+        echo "  Server IPv4: ${IPV4_SERVER}"
+        echo "  Server IPv6: ${IPV6_SERVER}"
+        echo "  Interface: $INTERFACE"
+        echo ""
+        echo "Available commands:"
+        echo "  wg-add-client <name>     - Add a new client"
+        echo "  wg-remove-client <name>  - Remove a client"
+        echo "  wg-list-clients          - List all clients and their status"
+        echo "  wg-server-info           - Show server information"
+        echo "  wg-debug-internet        - Debug connectivity issues"
+        echo "  wg-backup               - Create configuration backup"
+        echo "  wg show                 - Show active connections"
+        echo ""
+        echo "Configuration files:"
+        echo "  Server: /etc/wireguard/wg0.conf"
+        echo "  Clients: /etc/wireguard/clients/"
+        echo ""
+        echo -e "${YELLOW}Important: Save this network information for your records!${NC}"
+        echo "IPv4: ${IPV4_NETWORK}.0/24"
+        echo "IPv6: ${IPV6_NETWORK}::/64"
+        echo ""
+        echo -e "${GREEN}Your WireGuard server is ready to use!${NC}"
+        echo "Next step: Add clients with 'wg-add-client <client_name>'"
+    else
+        error "Post-installation connectivity test failed!"
+        echo ""
+        echo -e "${RED}Setup completed but connectivity tests failed.${NC}"
+        echo -e "${YELLOW}Run 'wg-debug-internet' to diagnose issues.${NC}"
+        exit 1
+    fi
 }
 
 # Run main function

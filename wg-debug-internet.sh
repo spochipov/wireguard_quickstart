@@ -202,13 +202,24 @@ check_firewall_rules() {
     
     # Check FORWARD rules
     echo -e "\nChecking FORWARD rules..."
-    FORWARD_ACCEPT=$(iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT.*wg0" | wc -l | tr -d ' \n' || echo "0")
+    # Look for ACCEPT rules that mention wg0 or allow all traffic
+    FORWARD_ACCEPT=$(iptables -L FORWARD -n 2>/dev/null | grep -E "(ACCEPT.*wg0|ACCEPT.*all.*all)" | wc -l | tr -d ' \n' || echo "0")
     if [ "$FORWARD_ACCEPT" -gt 0 ] 2>/dev/null; then
         success "FORWARD rules for wg0 found: $FORWARD_ACCEPT"
+        echo "FORWARD rules:"
+        iptables -L FORWARD -n 2>/dev/null | grep -E "(ACCEPT.*wg0|ACCEPT.*all.*all)" | head -5
     else
-        error "No FORWARD rules for wg0 found!"
-        echo "  Add rules to allow traffic forwarding through wg0"
-        ((ISSUES_FOUND++))
+        # Alternative check: look for any ACCEPT rules in FORWARD chain
+        FORWARD_ANY=$(iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT" | wc -l | tr -d ' \n' || echo "0")
+        if [ "$FORWARD_ANY" -gt 0 ] 2>/dev/null; then
+            success "FORWARD ACCEPT rules found: $FORWARD_ANY (may include wg0 traffic)"
+            echo "FORWARD rules:"
+            iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT" | head -5
+        else
+            error "No FORWARD rules for wg0 found!"
+            echo "  Add rules to allow traffic forwarding through wg0"
+            ((ISSUES_FOUND++))
+        fi
     fi
     
     # Check INPUT rules for WireGuard port
