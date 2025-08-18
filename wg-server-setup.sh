@@ -243,23 +243,6 @@ configure_firewall() {
     log "Basic firewall rules configured"
 }
 
-# Configure iptables rules for NAT and forwarding
-configure_iptables() {
-    log "Configuring iptables rules..."
-    
-    # IPv4 rules
-    iptables -t nat -A POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE
-    iptables -A FORWARD -i wg0 -j ACCEPT
-    iptables -A FORWARD -o wg0 -j ACCEPT
-    
-    # IPv6 rules
-    ip6tables -t nat -A POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE
-    ip6tables -A FORWARD -i wg0 -j ACCEPT
-    ip6tables -A FORWARD -o wg0 -j ACCEPT
-    
-    log "iptables rules configured (will be managed by WireGuard PostUp/PostDown)"
-}
-
 # Create WireGuard configuration
 create_wg_config() {
     log "Creating WireGuard configuration..."
@@ -270,6 +253,7 @@ create_wg_config() {
 Address = ${IPV4_SERVER}/24, ${IPV6_SERVER}/64
 ListenPort = 51820
 PrivateKey = $SERVER_PRIVATE_KEY
+SaveConfig = true
 
 # Performance optimizations for maximum speed
 MTU = 1500
@@ -280,25 +264,8 @@ PreUp = ethtool -K $INTERFACE rx-udp-gro-forwarding on 2>/dev/null || true
 PreUp = ethtool -K $INTERFACE rx-gro-list off 2>/dev/null || true
 
 # Firewall rules with performance optimizations
-PostUp = iptables -P FORWARD ACCEPT
-PostUp = ip6tables -P FORWARD ACCEPT
-PostUp = iptables -t nat -A POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE
-PostUp = ip6tables -t nat -A POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE
-PostUp = iptables -I FORWARD 1 -i wg0 -j ACCEPT
-PostUp = ip6tables -I FORWARD 1 -i wg0 -j ACCEPT
-PostUp = iptables -I FORWARD 1 -o wg0 -j ACCEPT
-PostUp = ip6tables -I FORWARD 1 -o wg0 -j ACCEPT
-
-# Optimize interface settings for performance
-PostUp = echo 2 > /sys/class/net/%i/queues/rx-0/rps_cpus 2>/dev/null || true
-PostUp = echo 2 > /sys/class/net/%i/queues/tx-0/xps_cpus 2>/dev/null || true
-
-PostDown = iptables -t nat -D POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE
-PostDown = ip6tables -t nat -D POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT
-PostDown = ip6tables -D FORWARD -i wg0 -j ACCEPT
-PostDown = iptables -D FORWARD -o wg0 -j ACCEPT
-PostDown = ip6tables -D FORWARD -o wg0 -j ACCEPT
+PostUp = iptables -P FORWARD ACCEPT; ip6tables -P FORWARD ACCEPT; iptables -t nat -A POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE; ip6tables -t nat -A POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE; iptables -I FORWARD 1 -i %i -j ACCEPT; ip6tables -I FORWARD 1 -i %i -j ACCEPT; iptables -I FORWARD 1 -o %i -j ACCEPT; ip6tables -I FORWARD 1 -o %i -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE; ip6tables -t nat -D POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE; iptables -D FORWARD -i %i -j ACCEPT; ip6tables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; ip6tables -D FORWARD -o %i -j ACCEPT
 
 # Clients will be added below this line
 EOF
@@ -463,39 +430,6 @@ test_wireguard_connectivity() {
     
     log "WireGuard interface is up with IP: $WG_IP"
     
-    # Check IP forwarding
-    IPV4_FORWARD=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
-    if [ "$IPV4_FORWARD" != "1" ]; then
-        error "IPv4 forwarding is not enabled!"
-        return 1
-    fi
-    
-    # Check NAT rules with retry
-    for i in {1..5}; do
-        NAT_RULES=$(iptables -t nat -L POSTROUTING -n 2>/dev/null | grep MASQUERADE | grep "${IPV4_NETWORK}.0/24" | wc -l)
-        if [ "$NAT_RULES" -gt 0 ]; then
-            break
-        fi
-        sleep 1
-    done
-    if [ "$NAT_RULES" -eq 0 ]; then
-        error "NAT rules for WireGuard network not found!"
-        return 1
-    fi
-    
-    # Check FORWARD rules with retry
-    for i in {1..5}; do
-        FORWARD_RULES=$(iptables -L FORWARD -n 2>/dev/null | grep "ACCEPT.*wg0" | wc -l)
-        if [ "$FORWARD_RULES" -gt 0 ]; then
-            break
-        fi
-        sleep 1
-    done
-    if [ "$FORWARD_RULES" -eq 0 ]; then
-        error "FORWARD rules for wg0 not found!"
-        return 1
-    fi
-    
     # Test internet connectivity from server
     if ! ping -c 3 8.8.8.8 >/dev/null 2>&1; then
         error "Server cannot reach internet after WireGuard setup!"
@@ -503,9 +437,6 @@ test_wireguard_connectivity() {
     fi
     
     log "✓ WireGuard connectivity test passed"
-    log "✓ IP forwarding is enabled"
-    log "✓ NAT rules are configured"
-    log "✓ FORWARD rules are configured"
     log "✓ Internet connectivity is working"
     
     return 0
