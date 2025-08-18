@@ -68,26 +68,31 @@ FORMATTED_ENDPOINT="$SERVER_ENDPOINT_IP"
 
 echo -e "${GREEN}✓ Using Endpoint: $FORMATTED_ENDPOINT:$SERVER_PORT${NC}"
 
-# Get server address block
+# Get server address block (robust parsing: remove masks, handle spaces)
 ADDRESS_LINE=$(grep '^Address' "$WG_CONF" | cut -d'=' -f2 | tr -d ' ')
 if [[ "$ADDRESS_LINE" == *","* ]]; then
-    IPV4_SERVER=$(echo "$ADDRESS_LINE" | cut -d',' -f1)
-    IPV6_SERVER=$(echo "$ADDRESS_LINE" | cut -d',' -f2)
+    IPV4_SERVER_RAW=$(echo "$ADDRESS_LINE" | cut -d',' -f1)
+    IPV6_SERVER_RAW=$(echo "$ADDRESS_LINE" | cut -d',' -f2)
+    # remove mask suffixes (/24, /64)
+    IPV4_SERVER="${IPV4_SERVER_RAW%%/*}"
+    IPV6_SERVER="${IPV6_SERVER_RAW%%/*}"
     IPV4_NETWORK=$(echo "$IPV4_SERVER" | cut -d'.' -f1-3)
     IPV6_NETWORK=$(echo "$IPV6_SERVER" | cut -d':' -f1-4)
     DUAL_STACK=true
 else
-    IPV4_SERVER="$ADDRESS_LINE"
+    IPV4_SERVER_RAW="$ADDRESS_LINE"
+    IPV4_SERVER="${IPV4_SERVER_RAW%%/*}"
     IPV4_NETWORK=$(echo "$IPV4_SERVER" | cut -d'.' -f1-3)
     DUAL_STACK=false
 fi
 
-# Find next available IPs
+# Find next available IPs (check AllowedIPs entries, more reliable)
 CLIENT_IPV4=""
 for i in {2..254}; do
-    candidate="${IPV4_NETWORK}.$i/32"
-    if ! grep -q "$candidate" "$WG_CONF"; then
-        CLIENT_IPV4="${IPV4_NETWORK}.$i"
+    candidate="${IPV4_NETWORK}.$i"
+    # Look for candidate in server config AllowedIPs or Address lines
+    if ! grep -E -q "(AllowedIPs *=.*${candidate}(/32)?|${candidate}/24|${candidate}/32)" "$WG_CONF"; then
+        CLIENT_IPV4="$candidate"
         break
     fi
 done
