@@ -60,14 +60,43 @@ check_internet_connectivity() {
         exit 1
     fi
     
-    # Test external IP detection
-    EXTERNAL_IP=$(curl -4 -s --connect-timeout 10 https://ifconfig.co 2>/dev/null || echo "")
+    # Robust external IP detection: try several services, DNS-based fallback, then IPv6
+    EXTERNAL_IP=""
+    for svc in "https://ifconfig.co" "https://icanhazip.com" "https://ipinfo.io/ip"; do
+        EXTERNAL_IP=$(curl -4 -s --connect-timeout 5 "$svc" 2>/dev/null || echo "")
+        if [[ "$EXTERNAL_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            break
+        fi
+    done
+
+    # DNS-based fallback using OpenDNS
     if [[ ! "$EXTERNAL_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        warn "Could not detect external IP address automatically"
-        echo "External IP detection failed, but continuing with setup..."
-        EXTERNAL_IP="YOUR_SERVER_IP"
+        if command -v dig >/dev/null 2>&1; then
+            EXTERNAL_IP=$(dig +short myip.opendns.com @resolver1.opendns.com 2>/dev/null || echo "")
+        fi
+    fi
+
+    if [[ "$EXTERNAL_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        log "External IPv4 detected: $EXTERNAL_IP"
     else
-        log "External IP detected: $EXTERNAL_IP"
+        # Try IPv6 detection if IPv4 not found
+        EXTERNAL_IPV6=""
+        for svc in "https://ifconfig.co" "https://icanhazip.com" "https://ipinfo.io/ip"; do
+            EXTERNAL_IPV6=$(curl -6 -s --connect-timeout 5 "$svc" 2>/dev/null || echo "")
+            # crude IPv6 test: presence of colon
+            if [[ "$EXTERNAL_IPV6" == *:* ]]; then
+                break
+            fi
+        done
+
+        if [[ "$EXTERNAL_IPV6" == *:* ]]; then
+            log "External IPv6 detected: $EXTERNAL_IPV6"
+            EXTERNAL_IP="$EXTERNAL_IPV6"
+        else
+            warn "Could not detect external IP address automatically"
+            echo "External IP detection failed, but continuing with setup..."
+            EXTERNAL_IP="YOUR_SERVER_IP"
+        fi
     fi
     
     log "Internet connectivity check passed"
