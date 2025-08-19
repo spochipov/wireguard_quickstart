@@ -52,8 +52,9 @@ cp "$WG_CONF" "$BACKUP_FILE"
 echo "Backup saved to $BACKUP_FILE"
 
 # Update or add ListenPort
-if grep -qE "^ListenPort" "$WG_CONF"; then
-  sed -i "s/^ListenPort.*/ListenPort = $NEW_PORT/" "$WG_CONF"
+if grep -qE "^[[:space:]]*ListenPort" "$WG_CONF"; then
+  # Replace ListenPort line tolerantly (allow leading whitespace)
+  sed -i "s/^[[:space:]]*ListenPort.*/ListenPort = $NEW_PORT/" "$WG_CONF"
 else
   # insert below [Interface]
   awk -v port="$NEW_PORT" 'BEGIN{added=0} /^\[Interface\]/{print; getline; print; print "ListenPort = " port; added=1; next} {print} END{ if(!added) print "[Interface]\nListenPort = " port}' "$WG_CONF" > "${WG_CONF}.tmp" && mv "${WG_CONF}.tmp" "$WG_CONF"
@@ -149,12 +150,25 @@ else
   wg-quick up wg0
 fi
 
-# Ensure runtime (kernel) listen port matches the config; if not, set it directly
+# Ensure runtime (kernel) listen port matches the config; if not, set it directly.
+# Also sync runtime configuration from file to be sure kernel state matches disk.
 if command -v wg >/dev/null 2>&1; then
+  # Give the service a short moment to settle
+  sleep 1
   RUNTIME_PORT=$(wg show wg0 2>/dev/null | awk '/listening port/ {print $3}' || echo "")
   if [ -n "$RUNTIME_PORT" ] && [ "$RUNTIME_PORT" != "$NEW_PORT" ]; then
     echo "Runtime listening port ($RUNTIME_PORT) differs from desired ($NEW_PORT). Applying with 'wg set'..."
-    wg set wg0 listen-port "$NEW_PORT" >/dev/null 2>&1 || echo "Warning: 'wg set' failed to apply listen-port to runtime"
+    # Try to set runtime listen port
+    if wg set wg0 listen-port "$NEW_PORT" >/dev/null 2>&1; then
+      echo "Applied runtime listen-port via 'wg set'."
+    else
+      echo "Warning: 'wg set' failed to apply listen-port to runtime"
+    fi
+  fi
+
+  # Sync runtime from file to ensure peers/allowedips are applied consistently
+  if command -v wg-quick >/dev/null 2>&1; then
+    wg syncconf wg0 <(wg-quick strip wg0) 2>/dev/null || true
   fi
 fi
 

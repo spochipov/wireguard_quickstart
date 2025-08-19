@@ -399,7 +399,8 @@ check_common_issues() {
     # Check system load
     LOAD_AVG=$(cat /proc/loadavg | awk '{print $1}')
     CPU_COUNT=$(nproc)
-    if (( $(echo "$LOAD_AVG > $CPU_COUNT" | bc -l) )); then
+    # Compare load average (may be fractional) to CPU count without requiring 'bc'
+    if awk -v l="$LOAD_AVG" -v c="$CPU_COUNT" 'BEGIN{ if (l > c) exit 0; exit 1 }'; then
         warn "High system load: $LOAD_AVG (CPUs: $CPU_COUNT)"
         echo "  High load may affect VPN performance"
     fi
