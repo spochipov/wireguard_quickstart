@@ -24,10 +24,10 @@ echo "APPLY mode: $APPLY (0 = dry-run, 1 = apply)"
 
 # Переменные (проверьте интерфейс внешнего выхода)
 WG_IF="wg0"
-EXT_IF="ens192"
+EXT_IF=$(ip route show default | awk '{print $5}') # Автоматическое определение внешнего интерфейса
 WG_PORT=${WG_PORT:-51820}
-WG_NET_V4="10.174.38.0/24"
-WG_NET_V6="fd67:db4c:8d28:200::/64"
+WG_NET_V4="10.193.167.0/24" # Изменено согласно выводу wg-debug-internet
+WG_NET_V6="fd1e:770f:3b59:3a00::/64" # Изменено согласно выводу wg-debug-internet
 
 echo
 echo "1) Разрешить входящий UDP на порт WireGuard (IPv4 + IPv6)"

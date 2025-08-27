@@ -48,7 +48,7 @@ echo -e "${GREEN}+ Adding new WireGuard client: $CLIENT_NAME${NC}"
 
 # Read server config
 # Read server private key and derive public key (robust parsing)
-SERVER_PRIVATE_KEY=$(grep -E '^\s*PrivateKey\s*=' "$WG_CONF" | head -1 | sed -E 's/.*=[[:space:]]*//')
+SERVER_PRIVATE_KEY=$(awk '/^PrivateKey/{print $3}' "$WG_CONF")
 if [ -n "$SERVER_PRIVATE_KEY" ]; then
     SERVER_PUBLIC_KEY=$(echo "$SERVER_PRIVATE_KEY" | wg pubkey)
 else

@@ -110,13 +110,18 @@ check_configuration_file() {
         warn "No listen port specified (will use default 51820)"
     fi
     
-    # Check for clients
-    CLIENT_COUNT=$(grep -c "^\[Peer\]" "$WG_CONF" 2>/dev/null || echo "0")
-    if [ "$CLIENT_COUNT" -gt 0 ]; then
-        success "$CLIENT_COUNT client(s) configured"
-    else
-        warn "No clients configured yet"
-    fi
+# Check for clients
+CLIENT_COUNT=$(grep -c "^\[Peer\]" "$WG_CONF" 2>/dev/null || echo "0")
+CLIENT_COUNT=${CLIENT_COUNT:-0}
+# Ensure CLIENT_COUNT is a non-negative integer
+if ! [[ "$CLIENT_COUNT" =~ ^[0-9]+$ ]]; then
+    CLIENT_COUNT=0
+fi
+if [ "$CLIENT_COUNT" -gt 0 ]; then
+    success "$CLIENT_COUNT client(s) configured"
+else
+    warn "No clients configured yet"
+fi
 }
 
 check_network_interfaces() {
@@ -491,5 +496,3 @@ main() {
 
 # Run main function
 main "$@"
-
-</final_file_content>
