@@ -42,63 +42,130 @@ fi
 
 log "Starting WireGuard server setup..."
 
-# Check internet connectivity before starting
-check_internet_connectivity() {
-    log "Checking internet connectivity..."
-    
-    # Test basic connectivity
-    if ! ping -c 3 8.8.8.8 >/dev/null 2>&1; then
-        error "No internet connectivity detected (ping 8.8.8.8 failed)"
-        echo "Please check your internet connection and try again"
-        exit 1
+DNS_TEST_HOST="${DNS_TEST_HOST:-deb.debian.org}"
+
+dns_resolves_v4() {
+    getent ahostsv4 "$1" >/dev/null 2>&1
+}
+
+is_systemd_resolved_stub() {
+    local target
+    target=$(readlink -f /etc/resolv.conf 2>/dev/null || echo "/etc/resolv.conf")
+    [[ "$target" == *"/run/systemd/resolve/stub-resolv.conf" ]] \
+        || [[ "$target" == *"/run/systemd/resolve/resolv.conf" ]]
+}
+
+apply_fallback_dns() {
+    local iface
+
+    if is_systemd_resolved_stub && command -v resolvectl >/dev/null 2>&1; then
+        iface=$(ip route | awk '/default/ {print $5; exit}')
+        if [ -n "$iface" ]; then
+            resolvectl dns "$iface" 8.8.8.8 1.1.1.1 2>/dev/null && return 0
+        fi
     fi
-    
-    # Test DNS resolution
-    if ! ping -c 3 google.com >/dev/null 2>&1; then
-        error "DNS resolution failed (ping google.com failed)"
-        echo "Please check your DNS configuration and try again"
-        exit 1
+
+    if [ -f /etc/resolv.conf ] && [ ! -L /etc/resolv.conf ]; then
+        printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+        return 0
     fi
-    
-    # Robust external IP detection: try several services, DNS-based fallback, then IPv6
+
+    if is_systemd_resolved_stub; then
+        warn "Could not configure DNS automatically (systemd-resolved stub)."
+        echo "  Run: resolvectl dns \$(ip route | awk '/default/ {print \$5; exit}') 8.8.8.8 1.1.1.1"
+        return 1
+    fi
+
+    printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf
+}
+
+ensure_dns_resolvers() {
+    if dns_resolves_v4 "$DNS_TEST_HOST"; then
+        return 0
+    fi
+
+    warn "DNS resolution for $DNS_TEST_HOST failed; applying fallback resolvers (8.8.8.8, 1.1.1.1)"
+    apply_fallback_dns || true
+
+    if dns_resolves_v4 "$DNS_TEST_HOST"; then
+        log "DNS resolution working after applying fallback resolvers"
+        return 0
+    fi
+
+    error "DNS resolution still failing for $DNS_TEST_HOST"
+    echo "Current /etc/resolv.conf:"
+    cat /etc/resolv.conf 2>/dev/null || echo "(missing)"
+    echo "Try: printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf"
+    echo "Or: resolvectl dns \$(ip route | awk '/default/ {print \$5; exit}') 8.8.8.8 1.1.1.1"
+    exit 1
+}
+
+detect_external_ip() {
     EXTERNAL_IP=""
     for svc in "https://ifconfig.co" "https://icanhazip.com" "https://ipinfo.io/ip"; do
         EXTERNAL_IP=$(curl -4 -s --connect-timeout 5 "$svc" 2>/dev/null || echo "")
         if [[ "$EXTERNAL_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            log "External IPv4 detected: $EXTERNAL_IP"
+            return 0
+        fi
+    done
+
+    EXTERNAL_IPV6=""
+    for svc in "https://ifconfig.co" "https://icanhazip.com" "https://ipinfo.io/ip"; do
+        EXTERNAL_IPV6=$(curl -6 -s --connect-timeout 5 "$svc" 2>/dev/null || echo "")
+        if [[ "$EXTERNAL_IPV6" == *:* ]]; then
             break
         fi
     done
 
-    # DNS-based fallback using OpenDNS
-    if [[ ! "$EXTERNAL_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        if command -v dig >/dev/null 2>&1; then
-            EXTERNAL_IP=$(dig +short myip.opendns.com @resolver1.opendns.com 2>/dev/null || echo "")
-        fi
+    if [[ "$EXTERNAL_IPV6" == *:* ]]; then
+        log "External IPv6 detected: $EXTERNAL_IPV6"
+        EXTERNAL_IP="$EXTERNAL_IPV6"
+        return 0
     fi
 
+    warn "Could not detect external IP address automatically"
+    echo "External IP detection failed, but continuing with setup..."
+    EXTERNAL_IP="YOUR_SERVER_IP"
+}
+
+detect_external_ip_dig_fallback() {
     if [[ "$EXTERNAL_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        log "External IPv4 detected: $EXTERNAL_IP"
-    else
-        # Try IPv6 detection if IPv4 not found
-        EXTERNAL_IPV6=""
-        for svc in "https://ifconfig.co" "https://icanhazip.com" "https://ipinfo.io/ip"; do
-            EXTERNAL_IPV6=$(curl -6 -s --connect-timeout 5 "$svc" 2>/dev/null || echo "")
-            # crude IPv6 test: presence of colon
-            if [[ "$EXTERNAL_IPV6" == *:* ]]; then
-                break
-            fi
-        done
-
-        if [[ "$EXTERNAL_IPV6" == *:* ]]; then
-            log "External IPv6 detected: $EXTERNAL_IPV6"
-            EXTERNAL_IP="$EXTERNAL_IPV6"
-        else
-            warn "Could not detect external IP address automatically"
-            echo "External IP detection failed, but continuing with setup..."
-            EXTERNAL_IP="YOUR_SERVER_IP"
+        return 0
+    fi
+    if command -v dig >/dev/null 2>&1; then
+        local ip
+        ip=$(dig +short myip.opendns.com @resolver1.opendns.com 2>/dev/null || echo "")
+        if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            EXTERNAL_IP="$ip"
+            log "External IPv4 detected via OpenDNS: $EXTERNAL_IP"
         fi
     fi
-    
+}
+
+# Check internet connectivity before starting
+check_internet_connectivity() {
+    if [ "${WG_SKIP_CONNECTIVITY_CHECK:-}" = "1" ]; then
+        warn "Skipping connectivity check (WG_SKIP_CONNECTIVITY_CHECK=1)"
+        EXTERNAL_IP="YOUR_SERVER_IP"
+        return 0
+    fi
+
+    log "Checking internet connectivity..."
+
+    if ! ping -4 -c 2 -W 3 8.8.8.8 >/dev/null 2>&1; then
+        error "No internet connectivity detected (ping -4 8.8.8.8 failed)"
+        echo "Please check your internet connection and try again"
+        exit 1
+    fi
+
+    ensure_dns_resolvers
+
+    if ! ping -4 -c 2 -W 3 deb.debian.org >/dev/null 2>&1; then
+        warn "IPv4 ping to deb.debian.org failed (ICMP may be blocked); continuing because DNS works"
+    fi
+
+    detect_external_ip
     log "Internet connectivity check passed"
 }
 
@@ -515,6 +582,7 @@ main() {
     install_basic_packages
     detect_interface
     install_packages
+    detect_external_ip_dig_fallback
     optimize_kernel
     generate_keys
     configure_firewall

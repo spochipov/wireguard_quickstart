@@ -43,6 +43,11 @@ fi
 # Global variables
 WG_CONF="/etc/wireguard/wg0.conf"
 ISSUES_FOUND=0
+DNS_TEST_HOST="${DNS_TEST_HOST:-deb.debian.org}"
+
+dns_resolves_v4() {
+    getent ahostsv4 "$1" >/dev/null 2>&1
+}
 
 check_wireguard_status() {
     section "WireGuard Service Status"
@@ -274,14 +279,19 @@ check_dns_configuration() {
         echo "System DNS configuration (/etc/resolv.conf):"
         cat /etc/resolv.conf
         
-        # Test DNS resolution
-        echo -e "\nTesting DNS resolution..."
-        if nslookup google.com >/dev/null 2>&1; then
-            success "DNS resolution working"
+        # Test DNS resolution (IPv4 A records — what apt needs)
+        echo -e "\nTesting DNS resolution (getent ahostsv4 $DNS_TEST_HOST)..."
+        if dns_resolves_v4 "$DNS_TEST_HOST"; then
+            success "DNS resolution working for $DNS_TEST_HOST"
         else
-            error "DNS resolution failed!"
-            echo "  Check your DNS configuration"
+            error "DNS resolution failed for $DNS_TEST_HOST!"
+            echo "  Check /etc/resolv.conf or run: resolvectl dns <iface> 8.8.8.8 1.1.1.1"
             ((ISSUES_FOUND++))
+        fi
+        if getent ahostsv6 "$DNS_TEST_HOST" >/dev/null 2>&1; then
+            log "IPv6 AAAA records resolve for $DNS_TEST_HOST"
+        else
+            warn "No IPv6 DNS records for $DNS_TEST_HOST (often normal on IPv4-only VPS)"
         fi
     else
         warn "/etc/resolv.conf not found"
@@ -307,20 +317,32 @@ check_connectivity() {
     # Test connectivity from server
     echo "Testing connectivity from server..."
     
-    if ping -c 3 8.8.8.8 >/dev/null 2>&1; then
-        success "Server can reach internet (ping 8.8.8.8)"
+    if ping -4 -c 2 -W 3 8.8.8.8 >/dev/null 2>&1; then
+        success "Server can reach internet (ping -4 8.8.8.8)"
     else
-        error "Server cannot reach internet!"
+        error "Server cannot reach internet (ping -4 8.8.8.8)!"
         echo "  Check your internet connection"
         ((ISSUES_FOUND++))
     fi
-    
-    if ping -c 3 google.com >/dev/null 2>&1; then
-        success "Server can resolve and reach google.com"
+
+    if dns_resolves_v4 "$DNS_TEST_HOST"; then
+        success "Server can resolve $DNS_TEST_HOST (IPv4)"
     else
-        error "Server cannot resolve/reach google.com!"
-        echo "  Check DNS and internet connectivity"
+        error "Server cannot resolve $DNS_TEST_HOST!"
+        echo "  Check DNS configuration (/etc/resolv.conf)"
         ((ISSUES_FOUND++))
+    fi
+
+    if ping -4 -c 2 -W 3 "$DNS_TEST_HOST" >/dev/null 2>&1; then
+        success "Server can reach $DNS_TEST_HOST over IPv4 (ICMP)"
+    elif dns_resolves_v4 "$DNS_TEST_HOST"; then
+        warn "ping -4 $DNS_TEST_HOST failed but DNS works (ICMP to host may be blocked)"
+    fi
+
+    if ping -c 2 google.com >/dev/null 2>&1; then
+        log "Unqualified ping google.com works"
+    elif ping -4 -c 2 google.com >/dev/null 2>&1; then
+        warn "ping google.com fails without -4 but ping -4 works (broken IPv6 route is likely)"
     fi
     
     # Test from WireGuard interface if possible
