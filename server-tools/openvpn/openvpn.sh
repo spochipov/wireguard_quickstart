@@ -124,58 +124,85 @@ install_packages_yum() {
   yum install -y openvpn easy-rsa iptables-services >/dev/null
 }
 
-setup_easy_rsa() {
+ensure_easyrsa_bin() {
   mkdir -p "${EASYRSA_DIR}"
-  if [ ! -d "${EASYRSA_DIR}/.git" ]; then
-    # Use system easy-rsa if available, otherwise copy from /usr/share/easy-rsa
+  if [ ! -x "${EASYRSA_DIR}/easyrsa" ]; then
     if [ -d /usr/share/easy-rsa ]; then
       cp -r /usr/share/easy-rsa/* "${EASYRSA_DIR}/"
     else
-      echo "Easy-RSA not found in /usr/share/easy-rsa. Попытка установить через пакет..."
-      # assume already installed
+      echo "Easy-RSA не найден в /usr/share/easy-rsa. Установите пакет easy-rsa."
+      exit 1
     fi
   fi
   chown -R root:root "${EASYRSA_DIR}"
   cd "${EASYRSA_DIR}"
-  # Configure easy-rsa to use EC
   export EASYRSA_BATCH=1
-  export EASYRSA_REQ_CN="OpenVPN-CA"
-  echo "EASYRSA_ALGO=ec" > "${EASYRSA_DIR}/vars"
-  echo "EASYRSA_CURVE=secp384r1" >> "${EASYRSA_DIR}/vars"
-  # Init PKI if not exists
+  export EASYRSA_REQ_CN="${EASYRSA_REQ_CN:-OpenVPN-CA}"
+  if [ -f "${EASYRSA_DIR}/vars" ]; then
+    grep -q 'EASYRSA_ALGO' "${EASYRSA_DIR}/vars" 2>/dev/null || {
+      echo "EASYRSA_ALGO=ec" >> "${EASYRSA_DIR}/vars"
+      echo "EASYRSA_CURVE=secp384r1" >> "${EASYRSA_DIR}/vars"
+    }
+  else
+    echo "EASYRSA_ALGO=ec" > "${EASYRSA_DIR}/vars"
+    echo "EASYRSA_CURVE=secp384r1" >> "${EASYRSA_DIR}/vars"
+  fi
+}
+
+ensure_pki_artifacts() {
+  ensure_easyrsa_bin
+
   if [ ! -d "${EASYRSA_DIR}/pki" ]; then
     ./easyrsa init-pki
+  fi
+
+  if [ ! -f "${EASYRSA_DIR}/pki/ca.crt" ]; then
     ./easyrsa --batch build-ca nopass
-    ./easyrsa gen-req server nopass
-    ./easyrsa sign-req server server
-    ./easyrsa gen-crl
+  fi
 
-    # Generate DH params for compatibility with OpenVPN if not present (safe for EC)
-    if [ ! -f "${EASYRSA_DIR}/pki/dh.pem" ]; then
-      ./easyrsa gen-dh
+  if [ ! -f "${EASYRSA_DIR}/pki/issued/server.crt" ]; then
+    if [ ! -f "${EASYRSA_DIR}/pki/private/server.key" ]; then
+      ./easyrsa gen-req server nopass
     fi
+    ./easyrsa sign-req server server
+  fi
 
-    # Generate tls-crypt key for extra TLS handshake protection
-    if [ ! -f "${EASYRSA_DIR}/pki/ta.key" ]; then
-      # use openvpn to generate a static key if available, otherwise fallback to openssl
-      if command -v openvpn >/dev/null 2>&1; then
-        openvpn --genkey --secret "${EASYRSA_DIR}/pki/ta.key"
-      else
-        openssl rand -out "${EASYRSA_DIR}/pki/ta.key" 256 2>/dev/null || true
-      fi
+  if [ ! -f "${EASYRSA_DIR}/pki/crl.pem" ]; then
+    echo "Генерирую CRL (crl.pem)..."
+    ./easyrsa gen-crl
+  fi
+
+  if [ ! -f "${EASYRSA_DIR}/pki/dh.pem" ]; then
+    ./easyrsa gen-dh || true
+  fi
+
+  if [ ! -f "${EASYRSA_DIR}/pki/ta.key" ]; then
+    if command -v openvpn >/dev/null 2>&1; then
+      openvpn --genkey --secret "${EASYRSA_DIR}/pki/ta.key"
+    else
+      openssl rand -out "${EASYRSA_DIR}/pki/ta.key" 256 2>/dev/null || true
     fi
   fi
-  # place files to server dir
+
+  for req in ca.crt issued/server.crt private/server.key crl.pem; do
+    if [ ! -f "${EASYRSA_DIR}/pki/${req}" ]; then
+      echo "Ошибка: отсутствует ${EASYRSA_DIR}/pki/${req} после инициализации PKI."
+      exit 1
+    fi
+  done
+}
+
+setup_easy_rsa() {
+  ensure_pki_artifacts
+
   mkdir -p "${SERVER_DIR}"
   cp "${EASYRSA_DIR}/pki/ca.crt" "${SERVER_DIR}/"
   cp "${EASYRSA_DIR}/pki/private/server.key" "${SERVER_DIR}/"
   cp "${EASYRSA_DIR}/pki/issued/server.crt" "${SERVER_DIR}/"
   cp "${EASYRSA_DIR}/pki/crl.pem" "${SERVER_DIR}/crl.pem"
-  # copy dh if generated
   if [ -f "${EASYRSA_DIR}/pki/dh.pem" ]; then
     cp "${EASYRSA_DIR}/pki/dh.pem" "${SERVER_DIR}/dh.pem"
   fi
-  # copy tls-crypt key if generated
   if [ -f "${EASYRSA_DIR}/pki/ta.key" ]; then
     cp "${EASYRSA_DIR}/pki/ta.key" "${SERVER_DIR}/ta.key"
     chmod 600 "${SERVER_DIR}/ta.key" || true
@@ -509,14 +536,21 @@ do_install() {
   write_server_conf
   setup_firewall
 
-  # Enable and start openvpn
-  # Place server config in /etc/openvpn/server/server.conf (systemd expects this)
+  # Enable and start openvpn (systemd: /etc/openvpn/server/server.conf)
   mkdir -p /etc/openvpn/server
+  for f in server.conf server.crt server.key ca.crt crl.pem; do
+    if [ ! -f "${SERVER_DIR}/${f}" ]; then
+      echo "Ошибка: отсутствует ${SERVER_DIR}/${f} перед запуском сервиса."
+      exit 1
+    fi
+  done
   cp "${SERVER_DIR}/server.conf" /etc/openvpn/server/server.conf
   cp "${SERVER_DIR}/server.crt" /etc/openvpn/server/
   cp "${SERVER_DIR}/server.key" /etc/openvpn/server/
   cp "${SERVER_DIR}/ca.crt" /etc/openvpn/server/
   cp "${SERVER_DIR}/crl.pem" /etc/openvpn/server/
+  [ -f "${SERVER_DIR}/dh.pem" ] && cp "${SERVER_DIR}/dh.pem" /etc/openvpn/server/ || true
+  [ -f "${SERVER_DIR}/ta.key" ] && cp "${SERVER_DIR}/ta.key" /etc/openvpn/server/ || true
   chmod 600 /etc/openvpn/server/server.key || true
 
   enable_openvpn_service
