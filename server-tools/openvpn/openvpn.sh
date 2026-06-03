@@ -536,22 +536,16 @@ do_install() {
   write_server_conf
   setup_firewall
 
-  # Enable and start openvpn (systemd: /etc/openvpn/server/server.conf)
-  mkdir -p /etc/openvpn/server
+  # Файлы уже в SERVER_DIR (/etc/openvpn/server) — systemd: openvpn-server@server
+  mkdir -p "${SERVER_DIR}"
   for f in server.conf server.crt server.key ca.crt crl.pem; do
     if [ ! -f "${SERVER_DIR}/${f}" ]; then
       echo "Ошибка: отсутствует ${SERVER_DIR}/${f} перед запуском сервиса."
       exit 1
     fi
   done
-  cp "${SERVER_DIR}/server.conf" /etc/openvpn/server/server.conf
-  cp "${SERVER_DIR}/server.crt" /etc/openvpn/server/
-  cp "${SERVER_DIR}/server.key" /etc/openvpn/server/
-  cp "${SERVER_DIR}/ca.crt" /etc/openvpn/server/
-  cp "${SERVER_DIR}/crl.pem" /etc/openvpn/server/
-  [ -f "${SERVER_DIR}/dh.pem" ] && cp "${SERVER_DIR}/dh.pem" /etc/openvpn/server/ || true
-  [ -f "${SERVER_DIR}/ta.key" ] && cp "${SERVER_DIR}/ta.key" /etc/openvpn/server/ || true
-  chmod 600 /etc/openvpn/server/server.key || true
+  chmod 600 "${SERVER_DIR}/server.key" || true
+  [ -f "${SERVER_DIR}/ta.key" ] && chmod 600 "${SERVER_DIR}/ta.key" || true
 
   enable_openvpn_service
 
