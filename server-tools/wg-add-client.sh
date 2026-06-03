@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# WireGuard Client Management Script with IPv6 support
-# Version: 2.4 - Fixed unmatched brace error and used heredoc for client config block
+# WireGuard Client Management Script (IPv4 only)
+# Version: 2.5
 
 set -euo pipefail
 
@@ -84,28 +84,15 @@ else
     echo -e "${YELLOW}Warning: Could not auto-detect external IPv4 address. Please set manually.${NC}"
 fi
 
-# Use IPv4 endpoint only
 FORMATTED_ENDPOINT="$SERVER_ENDPOINT_IP"
 
 echo -e "${GREEN}✓ Using Endpoint: $FORMATTED_ENDPOINT:$SERVER_PORT${NC}"
 
-# Get server address block (robust parsing: remove masks, handle spaces)
+# Parse server IPv4 address (ignore legacy IPv6 suffix after comma)
 ADDRESS_LINE=$(grep '^Address' "$WG_CONF" | cut -d'=' -f2 | tr -d ' ')
-if [[ "$ADDRESS_LINE" == *","* ]]; then
-    IPV4_SERVER_RAW=$(echo "$ADDRESS_LINE" | cut -d',' -f1)
-    IPV6_SERVER_RAW=$(echo "$ADDRESS_LINE" | cut -d',' -f2)
-    # remove mask suffixes (/24, /64)
-    IPV4_SERVER="${IPV4_SERVER_RAW%%/*}"
-    IPV6_SERVER="${IPV6_SERVER_RAW%%/*}"
-    IPV4_NETWORK=$(echo "$IPV4_SERVER" | cut -d'.' -f1-3)
-    IPV6_NETWORK=$(echo "$IPV6_SERVER" | cut -d':' -f1-4)
-    DUAL_STACK=true
-else
-    IPV4_SERVER_RAW="$ADDRESS_LINE"
-    IPV4_SERVER="${IPV4_SERVER_RAW%%/*}"
-    IPV4_NETWORK=$(echo "$IPV4_SERVER" | cut -d'.' -f1-3)
-    DUAL_STACK=false
-fi
+IPV4_SERVER_RAW=$(echo "$ADDRESS_LINE" | cut -d',' -f1)
+IPV4_SERVER="${IPV4_SERVER_RAW%%/*}"
+IPV4_NETWORK=$(echo "$IPV4_SERVER" | cut -d'.' -f1-3)
 
 # Find next available IPs (check AllowedIPs entries, more reliable)
 CLIENT_IPV4=""
@@ -123,23 +110,6 @@ if [ -z "$CLIENT_IPV4" ]; then
     exit 1
 fi
 
-CLIENT_IPV6=""
-if [ "$DUAL_STACK" = true ]; then
-    for i in {2..65534}; do
-        hex=$(printf "%x" "$i")
-        candidate="${IPV6_NETWORK}::${hex}/128"
-        if ! grep -q "$candidate" "$WG_CONF"; then
-            CLIENT_IPV6="${IPV6_NETWORK}::${hex}"
-            break
-        fi
-    done
-
-    if [ -z "$CLIENT_IPV6" ]; then
-        echo -e "${RED}No available IPv6s in $IPV6_NETWORK::/64${NC}"
-        exit 1
-    fi
-fi
-
 # Generate client keys
 umask 077
 CLIENT_PRIVATE_KEY=$(wg genkey)
@@ -147,18 +117,18 @@ CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
 
 echo "Generating client configuration..."
 
-# Write client config using heredoc
+# Write client config using heredoc (IPv4 only)
 cat > "$CLIENT_CONF" <<EOF
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
-Address = $CLIENT_IPV4/24$( [ "$DUAL_STACK" = true ] && echo ", $CLIENT_IPV6/64" )
-DNS = 1.1.1.1, 8.8.8.8$( [ "$DUAL_STACK" = true ] && echo ", 2606:4700:4700::1111, 2001:4860:4860::8888" )
+Address = $CLIENT_IPV4/24
+DNS = 1.1.1.1, 8.8.8.8
 MTU = 1500
 
 [Peer]
 PublicKey = $SERVER_PUBLIC_KEY
 Endpoint = $FORMATTED_ENDPOINT:$SERVER_PORT
-AllowedIPs = 0.0.0.0/0$( [ "$DUAL_STACK" = true ] && echo ", ::/0" )
+AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 EOF
 
@@ -166,15 +136,9 @@ EOF
 {
     echo ""
     echo "[Peer]"
-    if [ "$DUAL_STACK" = true ]; then
-        echo "# $CLIENT_NAME (IPv4: $CLIENT_IPV4, IPv6: $CLIENT_IPV6)"
-        echo "PublicKey = $CLIENT_PUBLIC_KEY"
-        echo "AllowedIPs = $CLIENT_IPV4/32, $CLIENT_IPV6/128"
-    else
-        echo "# $CLIENT_NAME (IPv4: $CLIENT_IPV4)"
-        echo "PublicKey = $CLIENT_PUBLIC_KEY"
-        echo "AllowedIPs = $CLIENT_IPV4/32"
-    fi
+    echo "# $CLIENT_NAME (IPv4: $CLIENT_IPV4)"
+    echo "PublicKey = $CLIENT_PUBLIC_KEY"
+    echo "AllowedIPs = $CLIENT_IPV4/32"
 } >> "$WG_CONF"
 
 # Reload WireGuard
@@ -191,7 +155,6 @@ fi
 echo ""
 echo -e "${GREEN}✓ Client '$CLIENT_NAME' added successfully.${NC}"
 echo "IPv4: $CLIENT_IPV4/24"
-[ "$DUAL_STACK" = true ] && echo "IPv6: $CLIENT_IPV6/64"
 echo "Config: $CLIENT_CONF"
 
 # Optional QR

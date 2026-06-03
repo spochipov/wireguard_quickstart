@@ -447,7 +447,7 @@ provide_solutions() {
         success "No critical issues found! Your WireGuard server appears to be configured correctly."
         echo ""
         echo "If clients still can't access internet, check:"
-        echo "• Client configuration (AllowedIPs should be 0.0.0.0/0, ::/0)"
+        echo "• Client configuration (AllowedIPs should be 0.0.0.0/0 only, no ::/0)"
         echo "• Client firewall settings"
         echo "• ISP blocking VPN traffic"
         echo "• Client DNS configuration"
