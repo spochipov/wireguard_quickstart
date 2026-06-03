@@ -53,6 +53,9 @@
 #
 set -euo pipefail
 
+# Версия установщика (для проверки: grep OPENVPN_SCRIPT_REV openvpn.sh)
+OPENVPN_SCRIPT_REV="2026-06-03-r3"
+
 # Конфигурация (можно изменить перед вызовом)
 OVPN_PORT=1194
 OVPN_PROTO=udp
@@ -212,7 +215,8 @@ setup_easy_rsa() {
 
 write_server_conf() {
   mkdir -p "${SERVER_DIR}"
-  cat > "${SERVER_DIR}/server.conf" <<EOF
+  {
+    cat <<EOF
 port ${OVPN_PORT}
 proto ${OVPN_PROTO}
 dev ${OVPN_DEV}
@@ -226,27 +230,27 @@ server ${VPN_NETWORK} 255.255.255.0
 push "redirect-gateway def1 bypass-dhcp"
 push "dhcp-option DNS ${DNS1}"
 push "dhcp-option DNS ${DNS2}"
-# Cipher and performance
 tls-server
 tls-version-min 1.2
 cipher AES-256-GCM
 ncp-ciphers AES-256-GCM:CHACHA20-POLY1305
 auth SHA256
-# Use explicit buffer sizes
 sndbuf ${OPENVPN_SOCKBUF}
 rcvbuf ${OPENVPN_SOCKBUF}
-# Keep logs minimal
 status /var/log/openvpn-status.log
 verb 3
 crl-verify ${SERVER_DIR}/crl.pem
 ca ${SERVER_DIR}/ca.crt
 cert ${SERVER_DIR}/server.crt
 key ${SERVER_DIR}/server.key
-dh ${SERVER_DIR}/dh.pem
-tls-crypt ${SERVER_DIR}/ta.key
-# Use ECDH params if available (easy-rsa handles ECDH internally)
-# no explicit dh
 EOF
+    if [ -f "${SERVER_DIR}/dh.pem" ]; then
+      echo "dh ${SERVER_DIR}/dh.pem"
+    fi
+    if [ -f "${SERVER_DIR}/ta.key" ]; then
+      echo "tls-crypt ${SERVER_DIR}/ta.key"
+    fi
+  } > "${SERVER_DIR}/server.conf"
 }
 
 setup_firewall() {
@@ -265,9 +269,9 @@ setup_firewall() {
   iptables -C FORWARD -d "${VPN_NETWORK}/24" -j ACCEPT 2>/dev/null || \
     iptables -A FORWARD -d "${VPN_NETWORK}/24" -j ACCEPT
 
-  # Save rules (Debian)
+  # Save rules (Debian); не прерывать install при ошибке save
   if command -v netfilter-persistent >/dev/null 2>&1; then
-    netfilter-persistent save
+    netfilter-persistent save >/dev/null 2>&1 || true
   elif command -v iptables-save >/dev/null 2>&1 && [ -w /etc/iptables ]; then
     iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
   fi
@@ -521,10 +525,13 @@ revoke_client() {
 
 do_install() {
   ensure_root
+  echo "=== Установка OpenVPN (${OPENVPN_SCRIPT_REV}) ==="
   PKG_MGR=$(detect_package_manager)
   if [ "${PKG_MGR}" = "apt" ]; then
+    echo "Устанавливаю пакеты (apt)..."
     install_packages_debian
   elif [ "${PKG_MGR}" = "yum" ]; then
+    echo "Устанавливаю пакеты (yum)..."
     install_packages_yum
   else
     echo "Не удалось определить пакетный менеджер. Поддерживаются apt/yum."
@@ -532,11 +539,12 @@ do_install() {
   fi
 
   apply_sysctl
+  echo "Инициализация PKI (easy-rsa)..."
   setup_easy_rsa
+  echo "Создаю ${SERVER_DIR}/server.conf..."
   write_server_conf
   setup_firewall
 
-  # Файлы уже в SERVER_DIR (/etc/openvpn/server) — systemd: openvpn-server@server
   mkdir -p "${SERVER_DIR}"
   for f in server.conf server.crt server.key ca.crt crl.pem; do
     if [ ! -f "${SERVER_DIR}/${f}" ]; then
@@ -544,13 +552,28 @@ do_install() {
       exit 1
     fi
   done
-  chmod 600 "${SERVER_DIR}/server.key" || true
-  [ -f "${SERVER_DIR}/ta.key" ] && chmod 600 "${SERVER_DIR}/ta.key" || true
+  chmod 600 "${SERVER_DIR}/server.key" 2>/dev/null || true
+  if [ -f "${SERVER_DIR}/ta.key" ]; then
+    chmod 600 "${SERVER_DIR}/ta.key" 2>/dev/null || true
+  fi
 
+  echo "Запускаю сервис OpenVPN..."
   enable_openvpn_service
 
-  echo "Установка завершена. Создайте клиентов: sudo $0 add-client <name>"
-  echo "Клиентские конфиги будут в ${OUTPUT_DIR}"
+  if systemctl is-active --quiet openvpn-server@server.service 2>/dev/null; then
+    echo "Сервис openvpn-server@server: active"
+  elif systemctl is-active --quiet openvpn.service 2>/dev/null; then
+    echo "Сервис openvpn: active"
+  else
+    echo "Внимание: сервис не в состоянии active. Проверьте:"
+    echo "  journalctl -u openvpn-server@server -e --no-pager | tail -30"
+  fi
+
+  echo ""
+  echo "Установка завершена. Создайте клиентов:"
+  echo "  sudo $0 add-client <name>"
+  echo "Клиентские конфигы: ${OUTPUT_DIR}"
+  echo "Порт: ${OVPN_PORT}/${OVPN_PROTO}, подсеть: ${VPN_NETWORK}/24"
 }
 
 main() {
