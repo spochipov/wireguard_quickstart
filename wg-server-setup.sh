@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # WireGuard Server Setup Script for Debian 12
-# Supports IPv4 + IPv6, optimized for maximum throughput
+# IPv4-only VPN (no IPv6 in WireGuard configs)
 # Author: Auto-generated script
 # Version: 1.0
 
@@ -110,21 +110,7 @@ detect_external_ip() {
         fi
     done
 
-    EXTERNAL_IPV6=""
-    for svc in "https://ifconfig.co" "https://icanhazip.com" "https://ipinfo.io/ip"; do
-        EXTERNAL_IPV6=$(curl -6 -s --connect-timeout 5 "$svc" 2>/dev/null || echo "")
-        if [[ "$EXTERNAL_IPV6" == *:* ]]; then
-            break
-        fi
-    done
-
-    if [[ "$EXTERNAL_IPV6" == *:* ]]; then
-        log "External IPv6 detected: $EXTERNAL_IPV6"
-        EXTERNAL_IP="$EXTERNAL_IPV6"
-        return 0
-    fi
-
-    warn "Could not detect external IP address automatically"
+    warn "Could not detect external IPv4 address automatically"
     echo "External IP detection failed, but continuing with setup..."
     EXTERNAL_IP="YOUR_SERVER_IP"
 }
@@ -177,13 +163,6 @@ generate_unique_networks() {
     local ipv4_third=$((RANDOM % 256))
     IPV4_NETWORK="10.${ipv4_second}.${ipv4_third}"
     IPV4_SERVER="${IPV4_NETWORK}.1"
-    
-    # Generate random IPv6 ULA subnet (fd00::/8)
-    local ipv6_hex1=$(printf "%04x" $((RANDOM % 65536)))
-    local ipv6_hex2=$(printf "%04x" $((RANDOM % 65536)))
-    local ipv6_hex3=$(printf "%04x" $((RANDOM % 65536)))
-    IPV6_NETWORK="fd${ipv6_hex1:0:2}:${ipv6_hex1:2:2}${ipv6_hex2:0:2}:${ipv6_hex2:2:2}${ipv6_hex3:0:2}:${ipv6_hex3:2:2}00"
-    IPV6_SERVER="${IPV6_NETWORK}::1"
 }
 
 # Update system and install basic packages first
@@ -228,9 +207,8 @@ optimize_kernel() {
     log "Optimizing kernel parameters for maximum throughput..."
     
     cat > /etc/sysctl.d/99-wireguard-performance.conf << 'EOF'
-# IPv4 and IPv6 forwarding (essential for VPN)
+# IPv4 forwarding (essential for VPN)
 net.ipv4.ip_forward = 1
-net.ipv6.conf.all.forwarding = 1
 
 # Network buffer optimizations for high throughput
 net.core.rmem_default = 262144
@@ -266,12 +244,6 @@ net.netfilter.nf_conntrack_udp_timeout = 60
 net.netfilter.nf_conntrack_udp_timeout_stream = 120
 net.netfilter.nf_conntrack_generic_timeout = 120
 
-# IPv6 optimizations
-net.ipv6.conf.all.accept_ra = 0
-net.ipv6.conf.default.accept_ra = 0
-net.ipv6.conf.all.autoconf = 0
-net.ipv6.conf.default.autoconf = 0
-
 # Memory and CPU optimizations
 vm.swappiness = 10
 vm.dirty_ratio = 15
@@ -290,7 +262,6 @@ EOF
         warn "Some kernel parameters could not be applied (normal in containers)"
         # Apply only essential parameters
         sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
-        sysctl -w net.ipv6.conf.all.forwarding=1 2>/dev/null || true
     }
     
     log "Kernel parameters optimized (container-compatible)"
@@ -335,13 +306,6 @@ configure_firewall() {
     # Allow traffic from WireGuard clients
     iptables -A INPUT -s ${IPV4_NETWORK}.0/24 -j ACCEPT
     
-    # IPv6 rules
-    ip6tables -A INPUT -p tcp --dport 22 -j ACCEPT
-    ip6tables -A INPUT -p udp --dport ${DEFAULT_LISTEN_PORT} -j ACCEPT
-    ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-    ip6tables -A INPUT -i lo -j ACCEPT
-    ip6tables -A INPUT -s ${IPV6_NETWORK}::/64 -j ACCEPT
-    
     log "Basic firewall rules configured"
 }
 
@@ -352,7 +316,7 @@ create_wg_config() {
     cat > /etc/wireguard/wg0.conf << EOF
 [Interface]
 # Server configuration
-Address = ${IPV4_SERVER}/24, ${IPV6_SERVER}/64
+Address = ${IPV4_SERVER}/24
 ListenPort = ${DEFAULT_LISTEN_PORT}
 PrivateKey = $SERVER_PRIVATE_KEY
 SaveConfig = true
@@ -366,8 +330,8 @@ PreUp = ethtool -K $INTERFACE rx-udp-gro-forwarding on 2>/dev/null || true
 PreUp = ethtool -K $INTERFACE rx-gro-list off 2>/dev/null || true
 
 # Firewall rules with performance optimizations
-PostUp = iptables -P FORWARD ACCEPT; ip6tables -P FORWARD ACCEPT; iptables -t nat -A POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE; ip6tables -t nat -A POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE; iptables -I FORWARD 1 -i %i -j ACCEPT; ip6tables -I FORWARD 1 -i %i -j ACCEPT; iptables -I FORWARD 1 -o %i -j ACCEPT; ip6tables -I FORWARD 1 -o %i -j ACCEPT
-PostDown = iptables -t nat -D POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE; ip6tables -t nat -D POSTROUTING -s ${IPV6_NETWORK}::/64 -o $INTERFACE -j MASQUERADE; iptables -D FORWARD -i %i -j ACCEPT; ip6tables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; ip6tables -D FORWARD -o %i -j ACCEPT
+PostUp = iptables -P FORWARD ACCEPT; iptables -t nat -A POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE; iptables -I FORWARD 1 -i %i -j ACCEPT; iptables -I FORWARD 1 -o %i -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -s ${IPV4_NETWORK}.0/24 -o $INTERFACE -j MASQUERADE; iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT
 
 # Clients will be added below this line
 EOF
@@ -603,9 +567,7 @@ main() {
         echo "Server Information:"
         echo "  External IP: $EXTERNAL_IP"
         echo "  IPv4 Network: ${IPV4_NETWORK}.0/24"
-        echo "  IPv6 Network: ${IPV6_NETWORK}::/64"
         echo "  Server IPv4: ${IPV4_SERVER}"
-        echo "  Server IPv6: ${IPV6_SERVER}"
         echo "  Interface: $INTERFACE"
         echo ""
         echo "Available commands:"
@@ -625,7 +587,6 @@ main() {
         echo ""
         echo -e "${YELLOW}Important: Save this network information for your records!${NC}"
         echo "IPv4: ${IPV4_NETWORK}.0/24"
-        echo "IPv6: ${IPV6_NETWORK}::/64"
         echo ""
         echo -e "${GREEN}Your WireGuard server is ready to use!${NC}"
         echo "Next step: Add clients with 'wg-add-client <client_name>'"
